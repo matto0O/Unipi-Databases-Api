@@ -2,10 +2,12 @@ import flask
 from dotenv import load_dotenv
 import os
 from pymongo import MongoClient
+import redis
 
 app = flask.Flask(__name__)
 load_dotenv()
 CLIENT = MongoClient(os.getenv('MONGO_URI'))
+REDIS = redis.Redis(host=os.getenv('REDIS_HOST'), port=os.getenv('REDIS_PORT'), decode_responses=True)
 DB = CLIENT['bricks']
 SETS_COLLECTION = DB['sets']
 
