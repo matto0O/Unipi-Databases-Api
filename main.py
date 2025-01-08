@@ -6,7 +6,7 @@ from pymongo import MongoClient
 app = flask.Flask(__name__)
 load_dotenv()
 CLIENT = MongoClient(os.getenv('MONGO_URI'))
-DB = CLIENT['sets']
+DB = CLIENT['bricks']
 SETS_COLLECTION = DB['sets']
 
 @app.route('/')
@@ -15,9 +15,8 @@ def index():
 
 @app.route('/sets/<id>')
 def get_set(id):
-    result = list(SETS_COLLECTION.find({"_id": id}))
+    result = list(SETS_COLLECTION.find({"_id": str(id)}))
     return flask.jsonify(result)
 
 if __name__ == '__main__':
-    print(CLIENT.server_info())
     app.run(debug=True)
