@@ -69,6 +69,10 @@ def delete_part(id):
         return jsonify({'error': 'Part not found'}), 404
     return jsonify({'deleted_count': result.deleted_count})
 
+# TODO find offers by part and color
+
+# TODO find part overview page (just part with its colors, without offers)
+
 # TODO add/delete a new color to a part
 
 # TODO add/delete a new offer to a part
