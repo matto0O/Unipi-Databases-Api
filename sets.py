@@ -16,6 +16,8 @@ def get_sets():
 @redis_cache(module='sets')
 def get_set(id):
     result = list(SETS_COLLECTION.find({"_id": str(id)}))
+    if result:
+        REDIS.hincrby(f"set:{id}", "visit_count", 1)
     return jsonify(result)
 
 @sets_api.route('/<id>', methods=['PUT'])
@@ -87,6 +89,17 @@ def delete_set(id):
 
 # TODO find most profitable sets
 
-# TODO find top x most popular sets (by view count in redis)
+@sets_api.route('/popular/<x>')
+def get_popular_sets(x):
+    all_sets = REDIS.smembers("all_sets")
+    popular_sets = []
+    for set_key in all_sets:
+        visit_count = REDIS.hget(set_key, "visit_count")
+        popular_sets.append({"_id": set_key.split(":")[1], "visit_count": visit_count})
+    popular_sets = sorted(popular_sets, key=lambda x: x['visit_count'], reverse=True)[:int(x)]
+    result = []
+    for s in popular_sets:
+        result.append(SETS_COLLECTION.find_one({"_id": s["_id"]}))
+    return jsonify(result)
 
 # TODO find top x cheapest sets
