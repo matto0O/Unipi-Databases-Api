@@ -32,7 +32,7 @@ def redis_cache(module, expire=60):
     '''
     def decorator(func):
         def wrap(*args, **kwargs): 
-            query = f"{module}:{func.__name__}:"
+            query = f"requests:{module}:{func.__name__}:"
             for i, item in enumerate(kwargs):
                 if i != 0:
                     query += '-'
