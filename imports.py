@@ -48,5 +48,6 @@ def redis_cache(module, expire=60):
             print('Inserting into cache...')
             REDIS.set(query, str(result.json), ex=expire*60)
             return result
+        wrap.__name__ = func.__name__
         return wrap
     return decorator
