@@ -67,4 +67,8 @@ def delete_part(id):
     result = PARTS_COLLECTION.delete_one({"_id": str(id)})
     if result.deleted_count == 0:
         return jsonify({'error': 'Part not found'}), 404
-    return jsonify({'deleted_count': result.deleted_count})   
+    return jsonify({'deleted_count': result.deleted_count})
+
+# TODO add/delete a new color to a part
+
+# TODO add/delete a new offer to a part

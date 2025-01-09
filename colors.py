@@ -17,3 +17,7 @@ def get_color(id):
     if not result:
         return jsonify({'error': 'Color not found'}), 404
     return jsonify(result) 
+
+# TODO add new color (include id in request)
+
+# TODO delete a color

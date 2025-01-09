@@ -44,7 +44,7 @@ def create_set():
     if not data or not isinstance(data, dict):
         return jsonify({'error': 'Invalid input. JSON body is required.'}), 400
 
-    required_fields = ['_id', 'name', 'year', 'num_parts', 'parts', 'sim_scores']
+    required_fields = ['_id', 'name', 'year', 'num_parts', 'parts']
     missing_fields = [field for field in required_fields if field not in data]
     if missing_fields:
         return jsonify({'error': f'Missing required fields: {", ".join(missing_fields)}'}), 400
@@ -78,3 +78,14 @@ def delete_set(id):
     if result.deleted_count == 0:
         return jsonify({'error': 'Set not found'}), 404
     return jsonify({'deleted_count': result.deleted_count})
+
+# TODO add/delete a new offer for a set
+
+# TODO on set creation count similarity scores with other sets and add only sets that have at least one part in common
+
+
+# TODO find most profitable sets
+
+# TODO find top x most popular sets (by view count in redis)
+
+# TODO find top x cheapest sets

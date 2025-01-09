@@ -117,3 +117,15 @@ def remove_items_from_inventory(id):
         user['inventory']['sets'][set_id] -= quantity
         if user['inventory']['sets'][set_id] <= 0:
             del user['inventory']['sets'][set_id]
+
+# TODO the rest of the crud operations for users
+
+
+
+# TODO most expensive owned part (include parts contained in sets)
+
+# TODO cheapest unowned sets to complete given inventory
+
+# TODO total value of owned parts
+
+# TODO percent of set completion given inventory
