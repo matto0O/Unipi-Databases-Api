@@ -13,6 +13,7 @@ def get_sets():
     return jsonify(result)
 
 @sets_api.route('/<id>')
+@redis_cache(module='sets')
 def get_set(id):
     result = list(SETS_COLLECTION.find({"_id": str(id)}))
     return jsonify(result)
