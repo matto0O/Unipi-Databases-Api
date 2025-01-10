@@ -26,10 +26,8 @@ def get_color(id):
 @redis_cache(module='colors')
 def add_color():
     try:
-        # Pobranie danych wejściowych
         new_color = request.get_json()
 
-        # Walidacja danych wejściowych
         if not isinstance(new_color, dict):
             return jsonify({'error': 'Input must be a JSON object'}), 400
         if '_id' not in new_color or not str(new_color['_id']).isdigit():
@@ -37,47 +35,41 @@ def add_color():
         if 'name' not in new_color or 'rgb' not in new_color:
             return jsonify({'error': 'Invalid input: "name" and "rgb" fields are required'}), 400
 
-        # Konwersja _id na int przed zapisaniem
         new_color['_id'] = int(new_color['_id'])
 
-        # Sprawdzenie, czy kolor o podanym `_id` już istnieje
         existing_color = COLORS_COLLECTION.find_one({'_id': new_color['_id']})
         if existing_color:
             return jsonify({'error': f'Color with _id {new_color["_id"]} already exists'}), 409
 
-        # Wstawienie nowego koloru do kolekcji
         COLORS_COLLECTION.insert_one(new_color)
 
-        # Konwersja `_id` z powrotem na string w odpowiedzi
         new_color['_id'] = str(new_color['_id'])
 
-        # Zwrócenie odpowiedzi bez krotki
         response = jsonify(new_color)
         response.status_code = 201
         return response
 
     except Exception as e:
-        # Obsługa wyjątków
+
         return jsonify({'error': f'Internal server error: {str(e)}'}), 500
 
 
 @colors_api.route('/<id>', methods=['PUT'])
 @redis_cache(module='colors')
+
+
 def update_color(id):
     updated_data = request.get_json()
 
-    # Validate input data
     if not isinstance(updated_data, dict):
         return jsonify({'error': 'Input must be a JSON object'}), 400
 
     try:
-        # Update color in the database
         result = COLORS_COLLECTION.update_one({"_id": int(id)}, {"$set": updated_data})
 
         if result.matched_count == 0:
             return jsonify({'error': 'Color not found'}), 404
 
-        # Retrieve the updated color
         updated_color = COLORS_COLLECTION.find_one({"_id": int(id)})
         updated_color['_id'] = str(updated_color['_id'])
 
@@ -93,7 +85,6 @@ def update_color(id):
 @redis_cache(module='colors')
 def delete_color(id):
     try:
-        # Attempt to delete the color
         result = COLORS_COLLECTION.delete_one({"_id": int(id)})
 
         if result.deleted_count == 0:
