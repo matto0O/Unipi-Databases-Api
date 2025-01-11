@@ -1,4 +1,3 @@
-from flask import Blueprint
 from imports import *
 
 parts_api = Blueprint('parts_api', __name__)
@@ -133,8 +132,6 @@ def delete_part(id):
         return jsonify({'error': 'Part not found'}), 404
     return jsonify({'deleted_count': result.deleted_count})
 
-
-# TODO find offers by part and color
 @parts_api.route('/offers/<id>/<color>', methods=['GET'])
 def get_offers_by_color(id, color):
     color = color.lower()
@@ -151,7 +148,6 @@ def get_offers_by_color(id, color):
     offers = colors[color]
     return jsonify(offers)
 
-# TODO find part overview page (just part with its colors, without offers)
 @parts_api.route('/<id>/colors', methods=['GET'])
 def get_part_overview(id):
     part = PARTS_COLLECTION.find_one({"_id": str(id)}, {"_id": 1, "colors": 1})
@@ -245,7 +241,6 @@ def delete_colors_from_part(id):
 
     return jsonify({'message': f'Colors deleted from part: {", ".join(colors_to_remove)}.'}), 200
 
-# TODO add/delete a new offer to a part
 @parts_api.route('/<id>/offers', methods=['POST'])
 def add_offer_to_part(id):
     data = request.json

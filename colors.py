@@ -1,5 +1,3 @@
-from flask import Flask
-from flask import Blueprint
 from imports import *
 
 colors_api = Blueprint('colors_api', __name__)
