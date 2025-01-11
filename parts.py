@@ -4,6 +4,7 @@ parts_api = Blueprint('parts_api', __name__)
 PARTS_COLLECTION = DB['parts']
 
 @parts_api.route('')
+@redis_cache(module='colors', expire=600)
 def get_parts():
     result = list(PARTS_COLLECTION.find())
     for part in result:
@@ -13,6 +14,7 @@ def get_parts():
     return jsonify(result)
 
 @parts_api.route('/<id>')
+@redis_cache(module='colors', expire=60)
 def get_part(id):
     result = list(PARTS_COLLECTION.find({"_id": str(id)}))
     if not result:
@@ -133,6 +135,7 @@ def delete_part(id):
     return jsonify({'deleted_count': result.deleted_count})
 
 @parts_api.route('/offers/<id>/<color>', methods=['GET'])
+@redis_cache(module='colors', expire=60)
 def get_offers_by_color(id, color):
     color = color.lower()
     part = PARTS_COLLECTION.find_one({"_id": str(id)})
@@ -149,6 +152,7 @@ def get_offers_by_color(id, color):
     return jsonify(offers)
 
 @parts_api.route('/<id>/colors', methods=['GET'])
+@redis_cache(module='colors', expire=60)
 def get_part_overview(id):
     part = PARTS_COLLECTION.find_one({"_id": str(id)}, {"_id": 1, "colors": 1})
 

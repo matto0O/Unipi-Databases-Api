@@ -10,6 +10,7 @@ SET_OFFERS_COLLECTION = DB['set_offers']
 COLORS_COLLECTION = DB['colors']
 
 @users_api.route('')
+@redis_cache(module='colors', expire=1)
 def get_users():
     result = list(USERS_COLLECTION.find())
     for user in result:
@@ -44,6 +45,7 @@ def create_user():
         return jsonify({'error': 'An unexpected error occurred.', 'details': str(e)}), 500
 
 @users_api.route('/<id>')
+@redis_cache(module='colors', expire=1)
 def get_user(id):
     result = list(USERS_COLLECTION.find({"_id": id}))
     if not result:
@@ -51,6 +53,7 @@ def get_user(id):
     return jsonify(result)
 
 @users_api.route('/<id>/inventory')
+@redis_cache(module='colors', expire=1)
 def get_user_inventory(id):
     user = USERS_COLLECTION.find_one({"_id": id})
     if not user:
@@ -174,6 +177,7 @@ def delete_user(id):
 
 #  most expensive owned part (include parts contained in sets)
 @users_api.route('/<id>/inventory/most_expensive_part')
+@redis_cache(module='colors')
 def most_expensive_part(id):
     user = USERS_COLLECTION.find_one({"_id": id})
     if not user:
@@ -207,6 +211,7 @@ def most_expensive_part(id):
         return jsonify({'error': 'No parts found in inventory.'}), 404
 
 @users_api.route('/<id>/inventory/total_value')
+@redis_cache(module='colors', expire=60)
 def total_value_of_owned_parts(id):
     user = USERS_COLLECTION.find_one({"_id": id})
     if not user:
@@ -242,6 +247,7 @@ def total_value_of_owned_parts(id):
     return jsonify({'total_value': round(total_value, 2)})
 
 @users_api.route('/<id>/inventory/completed/<top_count>', methods=['GET'])
+@redis_cache(module='colors', expire=60)
 def set_completed_percentage(id, top_count):
     top_count = int(top_count)
 

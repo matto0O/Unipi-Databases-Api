@@ -19,9 +19,7 @@ def get_color(id):
         return jsonify({'error': 'Color not found'}), 404
     return jsonify(result) 
 
-# TODO add new color (include id in request)
 @colors_api.route('', methods=['POST'])
-@redis_cache(module='colors')
 def add_color():
     try:
         new_color = request.get_json()
@@ -53,9 +51,6 @@ def add_color():
 
 
 @colors_api.route('/<id>', methods=['PUT'])
-@redis_cache(module='colors')
-
-
 def update_color(id):
     updated_data = request.get_json()
 
@@ -80,7 +75,6 @@ def update_color(id):
 
 
 @colors_api.route('/<id>', methods=['DELETE'])
-@redis_cache(module='colors')
 def delete_color(id):
     try:
         result = COLORS_COLLECTION.delete_one({"_id": int(id)})

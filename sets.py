@@ -8,6 +8,7 @@ SET_CONTENTS_COLLECTION = DB['set_contents']
 PARTS_COLLECTION = DB['parts']
 
 @sets_api.route('')
+@redis_cache(module='colors', expire=600)
 def get_sets():
     result = list(SET_OVERVIEWS_COLLECTION.find())
     for set in result:
@@ -15,7 +16,7 @@ def get_sets():
     return jsonify(result)
 
 @sets_api.route('/<id>')
-# @redis_cache(module='sets')
+@redis_cache(module='sets', expire=600)
 def get_set(id):
     result = SET_OVERVIEWS_COLLECTION.find_one({"_id": str(id)})
     offers = SET_OFFERS_COLLECTION.find_one({"_id": str(id)})
@@ -145,6 +146,7 @@ def delete_set(id):
     return jsonify({'deleted_count': result.deleted_count})
 
 @sets_api.route('/profitable/<x>')
+@redis_cache(module='colors', expire=60)
 def get_profitable_sets(x):
     pipeline = [
         {
@@ -186,6 +188,7 @@ def get_profitable_sets(x):
     return top_sets
 
 @sets_api.route('/popular/<x>')
+@redis_cache(module='colors', expire=60)
 def get_popular_sets(x):
     all_sets = REDIS.smembers("all_sets")
     popular_sets = []
@@ -199,11 +202,13 @@ def get_popular_sets(x):
     return jsonify(result)
 
 @sets_api.route('/cheapest/new/<x>')
+@redis_cache(module='colors', expire=60)
 def get_cheapest_new_sets(x):
     result = SET_OVERVIEWS_COLLECTION.find({"price": {"$ne": None}}).sort("price", 1).limit(int(x))
     return jsonify(list(result))
 
 @sets_api.route('/cheapest/used/<x>')
+@redis_cache(module='colors', expire=60)
 def get_cheapest_used_sets(x):
     pipeline = [
         {
