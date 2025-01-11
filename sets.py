@@ -32,25 +32,27 @@ def get_set(id):
     #     REDIS.hincrby(f"set:{id}", "visit_count", 1)
     return jsonify(result)
 
-@sets_api.route('/<id>', methods=['PUT'])
-def update_set(id):
+@sets_api.route('/<id>/offers', methods=['PUT', 'POST'])
+def update_set_offers(id):
     data = request.json
 
-    if not data or not isinstance(data, dict):
-        return jsonify({'error': 'Invalid input. JSON body is required.'}), 400
+    if not data or not isinstance(data, list):
+        return jsonify({'error': 'Invalid input. JSON array body is required.'}), 400
+    
+    for offer in data:
+        if not isinstance(offer, dict):
+            return jsonify({'error': 'Invalid input. JSON array must contain objects.'}), 400
+        if 'link' not in offer or 'price' not in offer:
+            return jsonify({'error': 'Missing required fields: link, price.'}), 400
+        if not isinstance('price', float):
+            return jsonify({'error': 'Price must be a float.'}), 400
+    
+    min_price = data[0]["price"]
 
-    if 'parts' in data and not isinstance(data['parts'], dict):
-        return jsonify({'error': "'parts' must be a dictionary with part IDs as keys and objects as values."}), 400
+    SET_OVERVIEWS_COLLECTION.update_one({"_id": id}, {"$set": {"min_price": min_price}}, upsert=True)
+    result = SET_OFFERS_COLLECTION.update_one({"_id": id}, {"offers": data})
 
-    if 'sim_scores' in data and not isinstance(data['sim_scores'], list):
-        return jsonify({'error': "'sim_scores' must be a list."}), 400
-
-    result = SETS_COLLECTION.update_one({"_id": id}, {"$set": data})
-    if result.matched_count == 0:
-        return jsonify({'error': 'Set not found.'}), 404
-
-    return jsonify({'modified_count': result.modified_count})
-
+    return jsonify(result.raw_result)
 
 @sets_api.route('', methods=['POST'])
 def create_set():
@@ -69,7 +71,26 @@ def create_set():
     if not isinstance(data['parts'], dict):
         return jsonify({'error': "'parts' must be a dictionary with part IDs as keys and objects as values."}), 400
 
-    # TODO on set creation count similarity scores with other sets and add only sets that have at least one part in common
+
+    # Very time consuming part here, but at the same time, scarecely used
+    sim_scores = []
+    part_keys = data['parts'].keys()
+    for other_set_contents in SET_CONTENTS_COLLECTION.find():
+        parts_in_common = 0
+        for other_part in other_set_contents.items():
+            if other_part[0] in part_keys:
+                if other_set_contents[1]['color'] in data['parts'][other_part[0]]['colors']:
+                    parts_in_common += min(other_set_contents['quantity'], data['parts'][other_part[0]]['quantity'])
+        if parts_in_common > 0:
+            total_parts = len(other_set_contents)
+            sim_score = round(parts_in_common / total_parts, 2)
+            sim_scores.append((other_set_contents["_id"], sim_score))
+            SET_SIMILARITIES_COLLECTION.update_one(
+                {"_id": other_set_contents["_id"]},
+                {"$push": {"sim_scores": {"_id": data["_id"], "sim_score": sim_score}}},
+                upsert=True
+            )
+
     if not isinstance(data['sim_scores'], list):
         return jsonify({'error': "'sim_scores' must be a list."}), 400
 
@@ -81,9 +102,25 @@ def create_set():
                 PARTS_COLLECTION.insert_one(part_data)
             except DuplicateKeyError:
                 pass 
+    
+    try:
+        SET_OFFERS_COLLECTION.insert_one({"_id": data["_id"], "offers": []})
+    except DuplicateKeyError:
+        return jsonify({'error': f"Set offers with _id '{data['_id']}' already exist."}), 409
+
+    try: 
+        SET_CONTENTS_COLLECTION.insert_one({"_id": data["_id"], "parts": data["parts"]})
+    except DuplicateKeyError:
+        return jsonify({'error': f"Set contents with _id '{data['_id']}' already exist."}), 409
+    
+    try:
+        SET_SIMILARITIES_COLLECTION.insert_one({"_id": data["_id"], "sim_scores": data["sim_scores"]})
+    except DuplicateKeyError:
+        return jsonify({'error': f"Similarity score with _id '{data['_id']}' already exists."}), 409
 
     try:
-        result = SETS_COLLECTION.insert_one(data)
+        del data['parts']
+        result = SET_OVERVIEWS_COLLECTION.insert_one(data)
         return jsonify({'inserted_id': str(result.inserted_id)}), 201
     except DuplicateKeyError:
         return jsonify({'error': f"Set with _id '{data['_id']}' already exists."}), 409
@@ -92,15 +129,23 @@ def create_set():
 
 @sets_api.route('/<id>', methods=['DELETE'])
 def delete_set(id):
-    
-    #TODO repair
-    result = SETS_COLLECTION.delete_one({"_id": id})
+    result = SET_OVERVIEWS_COLLECTION.delete_one({"_id": id})
     if result.deleted_count == 0:
         return jsonify({'error': 'Set not found'}), 404
+    
+    result = SET_SIMILARITIES_COLLECTION.delete_one({"_id": id})
+    if result.deleted_count == 0:
+        return jsonify({'error': 'Set not found'}), 404
+    
+    result = SET_OFFERS_COLLECTION.delete_one({"_id": id})
+    if result.deleted_count == 0:
+        return jsonify({'error': 'Set not found'}), 404
+    
+    result = SET_CONTENTS_COLLECTION.delete_one({"_id": id})
+    if result.deleted_count == 0:
+        return jsonify({'error': 'Set not found'}), 404
+    
     return jsonify({'deleted_count': result.deleted_count})
-
-# TODO add/delete a new offer for a set
-
 
 @sets_api.route('/profitable/<x>')
 def get_profitable_sets(x):
