@@ -206,97 +206,6 @@ def most_expensive_part(id):
     else:
         return jsonify({'error': 'No parts found in inventory.'}), 404
 
-
-# cheapest unowned sets to complete given inventory
-@users_api.route('/<id>/inventory/cheapest_set_to_complete', methods=['GET'])
-def cheapest_set_to_complete(id):
-    user = USERS_COLLECTION.find_one({"_id": id})
-    if not user:
-        return jsonify({'error': 'User not found'}), 404
-
-    user_inventory = user.get('inventory', {}).get('parts', {})
-    color_map = {color['_id']: color['name'] for color in COLORS_COLLECTION.find()}
-
-    user_part_ids = list(user_inventory.keys())
-    
-    # Pobieramy odpowiednie zestawy na podstawie zawartości
-    relevant_sets = SET_CONTENTS_COLLECTION.find({
-        "$or": [
-            {f"parts.{part_id}": {"$exists": True}} for part_id in user_part_ids
-        ]
-    })
-
-    # Pobieramy szczegóły zestawów z SET_OVERVIEWS_COLLECTION
-    relevant_set_ids = [set_data['_id'] for set_data in relevant_sets]
-    set_overviews = {overview["_id"]: overview for overview in SET_OVERVIEWS_COLLECTION.find({"_id": {"$in": relevant_set_ids}})}
-
-    result = []
-    for set_data in relevant_sets:
-        set_id = set_data['_id']
-        set_overview = set_overviews.get(set_id)
-
-        if not set_overview:
-            continue  # Jeśli brak danych w overview, pomijamy zestaw
-
-        set_name = set_overview.get('name', 'Unknown Set')
-        set_parts = set_data['parts']
-        
-        total_min_cost = 0
-        owned_parts = 0
-
-        missing_parts_info = []
-
-        for part_id, part_data in set_parts.items():
-            required_quantity = part_data['quantity']
-            color_id = part_data['color']
-            color_name = color_map.get(color_id)
-
-            if not color_name:
-                continue
-
-            user_quantity = user_inventory.get(part_id, {}).get(color_name, 0)
-            owned_quantity = min(user_quantity, required_quantity)
-            missing_quantity = max(0, required_quantity - owned_quantity)
-            owned_parts += owned_quantity
-
-            if missing_quantity > 0:
-                part_info = SET_CONTENTS_COLLECTION.find_one({"_id": part_id})
-                if not part_info:
-                    missing_parts_info.append({
-                        "part_id": part_id,
-                        "color_name": color_name,
-                        "reason": "Part not found in PARTS_COLLECTION"
-                    })
-                    continue
-
-                color_data = part_info.get('colors', {}).get(color_name, [])
-                if not color_data:
-                    missing_parts_info.append({
-                        "part_id": part_id,
-                        "color_name": color_name,
-                        "reason": "No price data available for this color"
-                    })
-                    continue
-
-                min_price = min(entry['Price'] for entry in color_data)
-                total_min_cost += missing_quantity * min_price
-
-        result.append({
-            "set_id": set_id,
-            "name": set_name,
-            "total_min_cost": total_min_cost,
-            "owned_parts": owned_parts,
-            "missing_parts_info": missing_parts_info
-        })
-
-    # Sortujemy wyniki po najniższym koszcie ukończenia
-    result = sorted(result, key=lambda x: x['total_min_cost'])
-
-    # Finalny wynik
-    return jsonify(result)
-
-
-
 @users_api.route('/<id>/inventory/total_value')
 def total_value_of_owned_parts(id):
     user = USERS_COLLECTION.find_one({"_id": id})
@@ -332,71 +241,96 @@ def total_value_of_owned_parts(id):
     # Zwracamy łączną wartość posiadanych części
     return jsonify({'total_value': round(total_value, 2)})
 
-# TODO percent of set completion given inventory
-@users_api.route('/<id>/inventory/set_completed_percentage', methods=['GET'])
-def set_completed_percentage(id):
+@users_api.route('/<id>/inventory/completed/<top_count>', methods=['GET'])
+def set_completed_percentage(id, top_count):
+    top_count = int(top_count)
+
     user = USERS_COLLECTION.find_one({"_id": id})
-    if not user:
+
+    if user is None:
         return jsonify({'error': 'User not found'}), 404
-
-    user_inventory = user.get('inventory', {}).get('parts', {})
-    user_part_ids = list(user_inventory.keys())
     
-    # Mapowanie kolorów
-    color_map = {color['_id']: color['name'] for color in COLORS_COLLECTION.find()}
-
-    # Pobieramy zestawy, które zawierają części użytkownika
-    relevant_set_contents = SET_CONTENTS_COLLECTION.find({
-        "$or": [
-            {f"parts.{part_id}": {"$exists": True}} for part_id in user_part_ids
-        ]
-    })
-
-    relevant_set_ids = [content["_id"] for content in relevant_set_contents]
-
-    # Pobieramy szczegóły zestawów
-    set_overviews = SET_OVERVIEWS_COLLECTION.find({"_id": {"$in": relevant_set_ids}})
-    set_offers = {offer["_id"]: offer for offer in SET_OFFERS_COLLECTION.find({"_id": {"$in": relevant_set_ids}})}
-
+    user_inventory = user['inventory']
     result = []
-    for set_overview in set_overviews:
-        set_id = set_overview["_id"]
-        set_name = set_overview["name"]
-        total_parts = set_overview.get("num_parts", 0)
 
-        set_content = SET_CONTENTS_COLLECTION.find_one({"_id": set_id})
-        if not set_content:
-            continue
-
-        set_parts = set_content["parts"]
-        owned_parts = 0
-
-        # Porównanie części zestawu z inwentarzem użytkownika
-        for part_id, part_data in set_parts.items():
-            required_quantity = part_data["quantity"]
-            color_id = part_data["color"]
-            color_name = color_map.get(color_id)
-
-            if not color_name:
-                continue
-
-            # Liczymy ilość posiadanych części w odpowiednim kolorze
-            user_quantity = user_inventory.get(part_id, {}).get(color_name, 0)
-            owned_parts += min(user_quantity, required_quantity)
-
-        # Obliczamy procent posiadanych części
-        completion_percentage = (owned_parts / total_parts) * 100 if total_parts > 0 else 0
+    for set_id, _ in user_inventory['sets'].items():
+        pipeline = [
+            {
+                '$match': {
+                    '_id': set_id
+                }
+            }, {
+                '$unwind': '$sim_scores'
+            }, {
+                '$project': {
+                    '_id': 0, 
+                    'similar_id': {
+                        '$arrayElemAt': [
+                            '$sim_scores', 0
+                        ]
+                    }, 
+                    'score': {
+                        '$arrayElemAt': [
+                            '$sim_scores', 1
+                        ]
+                    }
+                }
+            }, {
+                '$sort': {
+                    'score': -1
+                }
+            }, {
+                '$limit': 10
+            }
+        ]
         
-        # Dodajemy dane zestawu do wyników
-        result.append({
-            "set_id": set_id,
-            "name": set_name,
-            "completion_percentage": completion_percentage,
-            "total_parts": total_parts,
-            "owned_parts": owned_parts,
-        })
+        result.extend(list(SET_SIMILARITIES_COLLECTION.aggregate(pipeline)))
+    result = list(sorted(result, key=lambda x: x['score'], reverse=True))
+    result = result[:min(len(result), top_count)]
+    final_result = []
+    in_final = set()
 
-    # Sortujemy wyniki po procentach posiadanych części
-    result = sorted(result, key=lambda x: x['completion_percentage'], reverse=True)
+    while len(final_result) < top_count and result:
+        current = result.pop(0)
+        if current['similar_id'] not in in_final:
+            final_result.append(current)
+            in_final.add(current['similar_id'])
 
-    return jsonify(result)
+    user_parts = _get_all_parts(id)
+    final_percentage = []
+
+    for final_set in final_result:
+        set_contents = SET_CONTENTS_COLLECTION.find_one({"_id": final_set['similar_id']})
+        common_parts = 0
+        total_parts = set_contents['num_parts']
+        set_parts = set_contents['parts']
+
+        for part_id, val in set_parts.items():
+            if (part_id, val['color']) in user_parts:
+                common_parts += min(val['quantity'], user_parts[(part_id, val['color'])])
+        final_percentage.append({'set_id': final_set['similar_id'], 'percentage': round(common_parts / total_parts * 100, 2)})
+
+    return jsonify(final_percentage)     
+
+def _get_all_parts(uid):
+    user = USERS_COLLECTION.find_one({"_id": uid})
+    if user is None:
+        raise KeyError(uid)
+    all_parts = {}
+    for part_id, colors in user['inventory']['parts'].items():
+        for color, quantity in colors.items():
+            all_parts[(part_id, color)] = quantity
+
+    for brickset in user['inventory']['sets']:
+        for part_id, val in SET_CONTENTS_COLLECTION.find_one({"_id": brickset})["parts"].items():
+            if (part_id, val["color"]) in all_parts:
+                all_parts[(part_id, val["color"])] += val["quantity"]
+            else:
+                all_parts[(part_id, val["color"])] = val["quantity"]
+
+    return all_parts
+
+# TODO cheapest unowned sets to complete given inventory
+@users_api.route('/<id>/inventory/cheapest_set_to_complete', methods=['GET'])
+def cheapest_set_to_complete(id):
+   pass
