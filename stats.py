@@ -137,19 +137,19 @@ def database_statistics():
         "$project": {"_id": 1,"min_price": { "$min": { "$map": {"input": {"$objectToArray": "$colors"},"as": "color", "in": {
                             "$min": {
                                 "$map": {
-                                    "input": "$$color.v",  # Tablica ofert
+                                    "input": "$$color.v",  
                                     "as": "offer",
-                                    "in": "$$offer.Price"  # Ceny ofert
+                                    "in": "$$offer.Price"  
     }}}}}}}},
-    {"$sort": {"min_price": 1}},  # Sortujemy po najmniejszej cenie rosnąco
-    {"$limit": 1}  # Zwracamy tylko część z najniższą ceną
+    {"$sort": {"min_price": 1}},  
+    {"$limit": 1}  
     ])
 
     cheapest_part = next(cheapest_part, None)
 
     #most_expensive_part
     most_expensive_part = PARTS_COLLECTION.aggregate([
-    # Rozwijamy każdą ofertę z kolorów, aby uzyskać cenę
+ 
     {
         "$project": {
             "_id": 1, "max_price": {"$max": { "$map": { "input": {"$objectToArray": "$colors"},"as": "color","in": {
@@ -159,8 +159,8 @@ def database_statistics():
                                     "as": "offer",
                                     "in": "$$offer.Price"  
     }}}}}}}},
-    {"$sort": {"max_price": -1}},  # Sortujemy po najwyższej cenie malejąco
-    {"$limit": 1}  # Zwracamy tylko część z najwyższą ceną
+    {"$sort": {"max_price": -1}},  
+    {"$limit": 1} 
     ])
 
     most_expensive_part = next(most_expensive_part, None)
@@ -217,30 +217,30 @@ def database_statistics():
 
     #USER-SETS
     user_with_most_sets = USERS_COLLECTION.aggregate([
-    # Convert 'inventory.sets' into an array of key-value pairs (set ID and its count)
+
     {"$project": {
-        "sets": {"$objectToArray": "$inventory.sets"}  # Convert 'sets' into an array of set IDs
+        "sets": {"$objectToArray": "$inventory.sets"}  
     }},
-    {"$unwind": "$sets"},  # Unwind the array to process each set
+    {"$unwind": "$sets"}, 
     {
         "$project": {
-            "set_id": "$sets.k"  # Only select the set ID (key)
+            "set_id": "$sets.k"
         }
     },
     {
         "$group": {
-            "_id": "$_id",  # Group by user ID
-            "unique_sets": {"$addToSet": "$set_id"}  # Add unique set IDs to a set
+            "_id": "$_id",  
+            "unique_sets": {"$addToSet": "$set_id"} 
         }
     },
     {
         "$project": {
-            "_id": 1,  # Retain the user ID
-            "num_sets": {"$size": "$unique_sets"}  # Count the number of unique sets
+            "_id": 1, 
+            "num_sets": {"$size": "$unique_sets"} 
         }
     },
-    {"$sort": {"num_sets": -1}},  # Sort by number of unique sets in descending order
-    {"$limit": 1}  # Only keep the top user
+    {"$sort": {"num_sets": -1}},  
+    {"$limit": 1}  
     ])
 
     user_with_most_sets = next(user_with_most_sets, None)
@@ -274,19 +274,18 @@ def database_statistics():
     user_with_less_sets = next(user_with_less_sets, None)
 
     most_frequent_part = USERS_COLLECTION.aggregate([
-    # Zamiana "parts" w "inventory.parts" na tablicę par klucz-wartość
     {"$project": {
         "parts": {"$objectToArray": "$inventory.parts"}
     }},
-    {"$unwind": "$parts"},  # Rozwijamy tablicę, aby przetwarzać każdy klocek
+    {"$unwind": "$parts"}, 
     {
         "$group": {
-            "_id": "$parts.k",  # Grupujemy po ID części (klucz)
-            "count": {"$sum": 1}  # Liczymy ile razy pojawia się każda część
+            "_id": "$parts.k",
+            "count": {"$sum": 1}  
         }
     },
-    {"$sort": {"count": -1}},  # Sortujemy według liczby wystąpień w malejącej kolejności
-    {"$limit": 1}  # Zwracamy tylko najczęściej występujący klocek
+    {"$sort": {"count": -1}},
+    {"$limit": 1}  
     ])
 
     most_frequent_part = next(most_frequent_part, None)
