@@ -56,8 +56,6 @@ def update_set_offers(id):
 
 @sets_api.route('', methods=['POST'])
 def create_set():
-
-    #TODO repair
     data = request.json
 
     if not data or not isinstance(data, dict):
@@ -70,7 +68,6 @@ def create_set():
 
     if not isinstance(data['parts'], dict):
         return jsonify({'error': "'parts' must be a dictionary with part IDs as keys and objects as values."}), 400
-
 
     # Very time consuming part here, but at the same time, scarecely used
     sim_scores = []
