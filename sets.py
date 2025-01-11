@@ -87,7 +87,49 @@ def delete_set(id):
 # TODO on set creation count similarity scores with other sets and add only sets that have at least one part in common
 
 
-# TODO find most profitable sets
+@sets_api.route('/profitable/<x>')
+def get_profitable_sets(x):
+    pipeline = [
+        {
+            "$match": {
+                "offers": {
+                    "$exists": True,
+                    "$gte": {"$size": 1}
+                },
+                "price": {
+                    "$exists": True
+                }
+            }
+        },
+        {
+            "$addFields": {
+                "difference": {
+                    "$subtract": [
+                        "$price",
+                        {
+                            "$arrayElemAt": ["$offers.price", 0]
+                        }
+                    ]
+                }
+            }
+        },
+        {
+            "$sort": {
+                "difference": -1
+            }
+        },
+        {
+            "$project": {
+                "difference": 0
+            }
+        },
+        {
+            "$limit": int(x)
+        }
+    ]
+        
+    top_sets = list(SETS_COLLECTION.aggregate(pipeline))
+    return top_sets
 
 @sets_api.route('/popular/<x>')
 def get_popular_sets(x):
@@ -102,4 +144,45 @@ def get_popular_sets(x):
         result.append(SETS_COLLECTION.find_one({"_id": s["_id"]}))
     return jsonify(result)
 
-# TODO find top x cheapest sets
+@sets_api.route('/cheapest/new/<x>')
+def get_cheapest_new_sets(x):
+    result = SETS_COLLECTION.find({"price": {"$ne": None}}).sort("price", 1).limit(int(x))
+    return jsonify(list(result))
+
+@sets_api.route('/cheapest/used/<x>')
+def get_cheapest_used_sets(x):
+    pipeline = [
+        {
+            "$match": {
+                "offers": {
+                    "$exists": True,
+                    "$gte": {"$size": 1}
+                }
+            }
+        },
+        {
+            "$addFields": {
+                "offer_price": {
+                    "$arrayElemAt": ["$offers.price", 0]
+                }
+            }
+        },
+        {
+            "$sort": {
+                "offer_price": 1
+            }
+        },
+        {
+            "$project": {
+                "offer_price": 0
+            }
+        },
+        {
+            "$limit": int(x)
+        }
+    ]
+
+    top_sets = list(SETS_COLLECTION.aggregate(pipeline))
+    return top_sets
+
+
