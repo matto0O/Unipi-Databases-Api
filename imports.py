@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, Blueprint, request, jsonify
 from pymongo.errors import DuplicateKeyError
 from pymongo import MongoClient
 import redis

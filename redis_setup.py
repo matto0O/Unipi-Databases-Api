@@ -1,6 +1,6 @@
 from imports import *
 
-SETS_COLLECTION = DB['sets']
+SETS_COLLECTION = DB['set_overviews']
 PARTS_COLLECTION = DB['parts']
 
 def all_set_ids():

@@ -1,4 +1,3 @@
-from flask import Blueprint
 from imports import *
 
 users_api = Blueprint('users_api', __name__)
