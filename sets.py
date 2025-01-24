@@ -35,6 +35,7 @@ def get_set(id):
 @sets_api.route('/<id>/offers', methods=['PUT', 'POST'])
 def update_set_offers(id):
     data = request.json
+    print('dupa')
 
     if not data or not isinstance(data, list):
         return jsonify({'error': 'Invalid input. JSON array body is required.'}), 400
@@ -44,15 +45,16 @@ def update_set_offers(id):
             return jsonify({'error': 'Invalid input. JSON array must contain objects.'}), 400
         if 'link' not in offer or 'price' not in offer:
             return jsonify({'error': 'Missing required fields: link, price.'}), 400
-        if not isinstance('price', float):
+        if not isinstance(offer['price'], (float, int)):
+            print(offer['price'], type(offer['price']))
             return jsonify({'error': 'Price must be a float.'}), 400
     
     min_price = data[0]["price"]
 
-    SET_OVERVIEWS_COLLECTION.update_one({"_id": id}, {"$set": {"min_price": min_price}}, upsert=True)
-    result = SET_OFFERS_COLLECTION.update_one({"_id": id}, {"offers": data})
+    r1 = SET_OVERVIEWS_COLLECTION.update_one({"_id": id}, {"$set": {"min_price": min_price}}, upsert=True)
+    result = SET_OFFERS_COLLECTION.update_one({"_id": id}, {"$set": {"offers": data}}, upsert=True)
 
-    return jsonify(result.raw_result)
+    return jsonify(r1.modified_count, result.modified_count)
 
 @sets_api.route('', methods=['POST'])
 def create_set():

@@ -42,7 +42,6 @@ def add_color():
         COLORS_COLLECTION.insert_one(new_color)
 
         new_color['_id'] = str(new_color['_id'])
-
         response = jsonify(new_color)
         response.status_code = 201
         return response

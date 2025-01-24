@@ -64,6 +64,9 @@ def add_items_to_inventory(id):
     if not data or not isinstance(data, dict):
         return jsonify({'error': 'Invalid input. JSON body is required.'}), 400
 
+    if 'parts' not in data or 'sets' not in data:
+        return jsonify({'error': 'Both "parts" and "sets" are required in the input.'}), 400
+
     if 'parts' in data:
         if not isinstance(data['parts'], dict):
             return jsonify({'error': "'parts' must be a dictionary with part IDs as keys and colors with quantities as values."}), 400
