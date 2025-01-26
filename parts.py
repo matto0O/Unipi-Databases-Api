@@ -38,7 +38,7 @@ def update_part(id):
     if not isinstance(data['colors'], dict):
         return jsonify({'error': "'colors' must be a dictionary with color names as keys and arrays of objects as values."}), 400
 
-    # Normalizacja kolorów bezpośrednio w metodzie
+    # Normalize colors directly in the method
     normalized_colors = {}
     for color, offers in data['colors'].items():
         normalized_color = color.capitalize()  
@@ -72,7 +72,7 @@ def update_part(id):
 
     return jsonify({'modified_count': result.modified_count})
 
-
+# Route to create a new part
 @parts_api.route('', methods=['POST'])
 def create_part():
     data = request.json

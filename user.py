@@ -188,17 +188,17 @@ def most_expensive_part(id):
 
     if 'inventory' in user and 'parts' in user['inventory']:
         for part_id, colors in user['inventory']['parts'].items():
-            # Znajdź część w PARTS_COLLECTION
+            # Find the part in PARTS_COLLECTION
             part = PARTS_COLLECTION.find_one({"_id": part_id})
             if part:
-                # Część istnieje, sprawdzamy ceny jej kolorów
+                # Part exists, check the prices of its colors
                 for color, quantity in colors.items():
-                    # Sprawdzamy, czy są kolory i ceny w tej części
+                    # Check if there are colors and prices in this part
                     if 'colors' in part and isinstance(part['colors'], dict):
                         color_entries = part['colors'].get(color, [])
                         for entry in color_entries:
                             if isinstance(entry, dict) and 'Price' in entry:
-                                price = entry['Price']  # Cena tego koloru
+                                price = entry['Price']  # Price of this color
                                 total_price = price * quantity 
                                 if total_price > max_price:
                                     max_price = total_price
@@ -216,32 +216,32 @@ def total_value_of_owned_parts(id):
         return jsonify({'error': 'User not found'}), 404
 
     total_value = 0
-    # Sprawdzamy części w inwentarzu użytkownika
+    # Check parts in user's inventory
     if 'inventory' in user and 'parts' in user['inventory']:
         for part_id, colors in user['inventory']['parts'].items():
-            # Znajdź część w PARTS_COLLECTION
+            # Find the part in PARTS_COLLECTION
             part = PARTS_COLLECTION.find_one({"_id": part_id})
             if part:
-                # Część istnieje, sprawdzamy ceny jej kolorów
+                # Part exists, check the prices of its colors
                 for color, quantity in colors.items():
-                    # Sprawdzamy, czy są kolory i ceny w tej części
+                    # Check if there are colors and prices in this part
                     if 'colors' in part and isinstance(part['colors'], dict):
                         color_entries = part['colors'].get(color, [])
                         
-                        # Jeśli mamy ceny dla tego koloru, znajdź najwyższą cenę
+                        # If we have prices for this color, find the highest price
                         if color_entries:
                             max_price = 0
                             for entry in color_entries:
                                 if isinstance(entry, dict) and 'Price' in entry:
                                     price = entry['Price']
                                     if price > max_price:
-                                        max_price = price  # Wybieramy najwyższą cenę dla tego koloru
+                                        max_price = price  # Choose the highest price for this color
 
-                            if max_price > 0:  # Jeśli mamy cenę dla tego koloru
-                                total_price = max_price * quantity  # Całkowita cena = cena * ilość
-                                total_value += total_price  # Sumujemy wartości wszystkich części
+                            if max_price > 0:  # If we have a price for this color
+                                total_price = max_price * quantity  # Total price = price * quantity
+                                total_value += total_price  # Sum the values of all parts
 
-    # Zwracamy łączną wartość posiadanych części
+    # Return the total value of owned parts
     return jsonify({'total_value': round(total_value, 2)})
 
 @users_api.route('/<id>/inventory/completed/<top_count>', methods=['GET'])
@@ -333,7 +333,68 @@ def _get_all_parts(uid):
 
     return all_parts
 
-# TODO cheapest unowned sets to complete given inventory
-@users_api.route('/<id>/inventory/cheapest_set_to_complete', methods=['GET'])
-def cheapest_set_to_complete(id):
-   pass
+#This function compute the cheapest set that the user can complete
+@users_api.route('/<id>/inventory/cheapest_set', methods=['GET'])
+def compare_inventory_with_all_sets_and_find_cheapest(id):
+    user = USERS_COLLECTION.find_one({"_id": id})
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+  
+    user_parts = _get_all_parts(id)
+    completed_percentages = []
+
+    all_sets = SET_CONTENTS_COLLECTION.find()
+
+    for set_doc in all_sets:
+        set_id = set_doc["_id"]
+        set_parts = set_doc["parts"]
+        total_parts_in_set = 0
+        owned_parts_count = 0
+
+        for part_id, part_info in set_parts.items():
+            total_parts_in_set += part_info["quantity"]
+            user_quantity = user_parts.get((part_id, part_info["color"]), 0)
+            owned_parts_count += min(user_quantity, part_info["quantity"])
+
+        if total_parts_in_set > 0:
+            completion_percentage = (owned_parts_count / total_parts_in_set) * 100
+        else:
+            completion_percentage = 0
+
+        if completion_percentage < 100:  # Skip sets with 100% completion
+            completed_percentages.append({
+                "set_id": set_id,
+                "completion_percentage": round(completion_percentage, 2)
+            })
+
+    completed_percentages.sort(key=lambda x: x["completion_percentage"], reverse=True)
+    completed_percentages = completed_percentages[:10]  # Only consider the top 10
+
+    cheapest_set = None
+    min_price = float('inf')
+
+    for set_info in completed_percentages:
+        set_id = set_info["set_id"]
+
+        set_overview = SET_OVERVIEWS_COLLECTION.find_one({"_id": set_id})
+        if set_overview and "min_price" in set_overview:
+            if set_overview["min_price"] < min_price:
+                min_price = set_overview["min_price"]
+                cheapest_set = {
+                    "set_id": set_id,
+                    "name": set_overview["name"],
+                    "year": set_overview["year"],
+                    "num_parts": set_overview["num_parts"],
+                    "min_price": set_overview["min_price"],
+                    "completion_percentage": set_info["completion_percentage"]
+                }
+
+    if not cheapest_set:
+        return jsonify({
+            "completed_percentages": completed_percentages
+        }), 404
+
+    return jsonify({
+        "cheapest_set": cheapest_set,
+        "completed_percentages": completed_percentages
+    })

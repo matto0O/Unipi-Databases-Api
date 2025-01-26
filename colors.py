@@ -19,7 +19,7 @@ def get_color(id):
         return jsonify({'error': 'Color not found'}), 404
     return jsonify(result) 
 
-# TODO add new color (include id in request)
+#  add new color (include id in request)
 @colors_api.route('', methods=['POST'])
 @redis_cache(module='colors')
 def add_color():
