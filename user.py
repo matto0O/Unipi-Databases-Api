@@ -335,7 +335,7 @@ def _get_all_parts(uid):
 
 #This function compute the cheapest set that the user can complete
 @users_api.route('/<id>/inventory/cheapest_set', methods=['GET'])
-def compare_inventory_with_all_sets_and_find_cheapest(id):
+def find_cheapest_from_inventory(id):
     user = USERS_COLLECTION.find_one({"_id": id})
     if not user:
         return jsonify({'error': 'User not found'}), 404
@@ -377,15 +377,15 @@ def compare_inventory_with_all_sets_and_find_cheapest(id):
         set_id = set_info["set_id"]
 
         set_overview = SET_OVERVIEWS_COLLECTION.find_one({"_id": set_id})
-        if set_overview and "min_price" in set_overview:
-            if set_overview["min_price"] < min_price:
-                min_price = set_overview["min_price"]
+        if set_overview and "min_offer" in set_overview:
+            if set_overview["min_offer"] < min_price:
+                min_offer = set_overview["min_offer"]
                 cheapest_set = {
                     "set_id": set_id,
                     "name": set_overview["name"],
                     "year": set_overview["year"],
                     "num_parts": set_overview["num_parts"],
-                    "min_price": set_overview["min_price"],
+                    "min_offer": set_overview["min_offer"],
                     "completion_percentage": set_info["completion_percentage"]
                 }
 
