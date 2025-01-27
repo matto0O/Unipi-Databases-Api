@@ -40,7 +40,7 @@ def update_part(id):
     if not isinstance(data['colors'], dict):
         return jsonify({'error': "'colors' must be a dictionary with color names as keys and arrays of objects as values."}), 400
 
-    # Normalizacja kolorów bezpośrednio w metodzie
+    # Normalize colors directly in the method
     normalized_colors = {}
     for color, offers in data['colors'].items():
         normalized_color = color.capitalize()  
@@ -74,7 +74,7 @@ def update_part(id):
 
     return jsonify({'modified_count': result.modified_count})
 
-
+# Route to create a new part
 @parts_api.route('', methods=['POST'])
 def create_part():
     data = request.json
@@ -106,17 +106,13 @@ def create_part():
             if not isinstance(offer, dict):
                 return jsonify({'error': f"Each offer for color '{color}' should be a dictionary."}), 400
 
-            if 'Link' in offer:
-                if 'Price' not in offer or 'Quantity' not in offer:
-                    return jsonify({'error': f"If a 'Link' is provided for color '{color}', both 'Price' and 'Quantity' must be present."}), 400
+            if 'Link' not in offer or 'Price' not in offer or 'Quantity' not in offer:
+                return jsonify({'error': f"Each offer for color '{color}' must include 'Link', 'Price', and 'Quantity'."}), 400
 
-                if not isinstance(offer['Price'], (int, float)):
-                    return jsonify({'error': f"The 'Price' in offer for color '{color}' must be a number."}), 400
-                if not isinstance(offer['Quantity'], int):
-                    return jsonify({'error': f"The 'Quantity' in offer for color '{color}' must be an integer."}), 400
-            else:
-                if 'Price' in offer or 'Quantity' in offer:
-                    return jsonify({'error': f"If no 'Link' is provided for color '{color}', 'Price' and 'Quantity' cannot be specified."}), 400
+            if not isinstance(offer['Price'], (int, float)):
+                return jsonify({'error': f"The 'Price' in offer for color '{color}' must be a number."}), 400
+            if not isinstance(offer['Quantity'], int):
+                return jsonify({'error': f"The 'Quantity' in offer for color '{color}' must be an integer."}), 400
 
     try:
         result = PARTS_COLLECTION.insert_one(data)
@@ -249,14 +245,26 @@ def delete_colors_from_part(id):
 def add_offer_to_part(id):
     data = request.json
 
-    if not data or 'color' not in data or 'offer' not in data:
-        return jsonify({'error': "'color' and 'offer' fields are required."}), 400
+    if not data or 'colors' not in data:
+        return jsonify({'error': "'colors' field is required."}), 400
 
-    color = data['color'].strip().capitalize()  # Normalize color name (capitalized)
-    offer = data['offer']
+    colors = data['colors']
 
-    if not isinstance(offer, dict) or 'Link' not in offer or 'Price' not in offer or 'Quantity' not in offer:
-        return jsonify({'error': "'offer' must be a dictionary with 'Link', 'Price', and 'Quantity' fields."}), 400
+    if not isinstance(colors, dict):
+        return jsonify({'error': "'colors' must be a dictionary with color names as keys and lists of offers as values."}), 400
+
+    for color, offers in colors.items():
+        if not isinstance(offers, list):
+            return jsonify({'error': f"'{color}' should have a list of offers."}), 400
+
+        for offer in offers:
+            if not isinstance(offer, dict) or 'Link' not in offer or 'Price' not in offer or 'Quantity' not in offer:
+                return jsonify({'error': f"Each offer for color '{color}' must include 'Link', 'Price', and 'Quantity'."}), 400
+
+            if not isinstance(offer['Price'], (int, float)):
+                return jsonify({'error': f"The 'Price' in offer for color '{color}' must be a number."}), 400
+            if not isinstance(offer['Quantity'], int):
+                return jsonify({'error': f"The 'Quantity' in offer for color '{color}' must be an integer."}), 400
 
     part = PARTS_COLLECTION.find_one({"_id": str(id)})
 
@@ -266,16 +274,17 @@ def add_offer_to_part(id):
     if 'colors' not in part:
         part['colors'] = {}
 
-    if color not in part['colors']:
-        part['colors'][color] = []
+    for color, offers in colors.items():
+        normalized_color = color.capitalize()
+        if normalized_color not in part['colors']:
+            part['colors'][normalized_color] = []
 
-    part['colors'][color].append(offer)
-
-    part['colors'][color].sort(key=lambda x: x['Price'])
+        part['colors'][normalized_color].extend(offers)
+        part['colors'][normalized_color].sort(key=lambda x: x['Price'])
 
     PARTS_COLLECTION.update_one({"_id": str(id)}, {"$set": {"colors": part['colors']}})
 
-    return jsonify({'message': f'Offer added to color "{color}".'}), 201
+    return jsonify({'message': 'Offers added successfully.'}), 201
 
 @parts_api.route('/<id>/offers', methods=['DELETE'])
 def delete_offer_from_part(id):

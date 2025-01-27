@@ -19,6 +19,7 @@ def get_color(id):
         return jsonify({'error': 'Color not found'}), 404
     return jsonify(result) 
 
+#  add new color (include id in request)
 @colors_api.route('', methods=['POST'])
 def add_color():
     try:
@@ -40,7 +41,6 @@ def add_color():
         COLORS_COLLECTION.insert_one(new_color)
 
         new_color['_id'] = str(new_color['_id'])
-
         response = jsonify(new_color)
         response.status_code = 201
         return response
