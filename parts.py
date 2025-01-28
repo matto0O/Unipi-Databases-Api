@@ -4,7 +4,7 @@ parts_api = Blueprint('parts_api', __name__)
 PARTS_COLLECTION = DB['parts']
 
 @parts_api.route('')
-@redis_cache(module='colors', expire=600)
+@redis_cache(module='parts', expire=600)
 def get_parts():
     result = list(PARTS_COLLECTION.find())
     for part in result:
@@ -14,7 +14,7 @@ def get_parts():
     return jsonify(result)
 
 @parts_api.route('/<id>')
-@redis_cache(module='colors', expire=60)
+@redis_cache(module='parts', expire=60)
 def get_part(id):
     result = list(PARTS_COLLECTION.find({"_id": str(id)}))
     if not result:
@@ -24,6 +24,38 @@ def get_part(id):
         part['_id'] = str(part['_id'])
         part['colors'] = {color.capitalize(): value for color, value in part['colors'].items()}
     return jsonify(result)
+
+@parts_api.route('/colors/<color>', defaults={'limit': None})
+@parts_api.route('/colors/<color>?limit=<limit>')
+@redis_cache(module='parts', expire=60)
+def get_parts_by_color(color, limit):
+    color_name = REDIS.get(f"colors:{color}:name")
+    if not color_name:
+        return jsonify({'error': 'Color not found'}), 404
+    
+    aggregation = [
+        {
+            '$match': {
+                f'colors.{color_name}': {
+                    '$exists': True
+                }
+            }
+        }, {
+            '$project': {
+                'colors': {
+                    color_name: 1
+                }
+            }
+        }
+    ]
+
+    if limit:
+        try:
+            aggregation.append({'$limit': int(limit)})
+        except ValueError:
+            return jsonify({'error': 'Invalid limit value. Must be an integer.'}), 400
+    
+    return jsonify(list(PARTS_COLLECTION.aggregate(aggregation)))
 
 @parts_api.route('/<id>', methods=['PUT'])
 def update_part(id):
@@ -131,7 +163,7 @@ def delete_part(id):
     return jsonify({'deleted_count': result.deleted_count})
 
 @parts_api.route('/offers/<id>/<color>', methods=['GET'])
-@redis_cache(module='colors', expire=60)
+@redis_cache(module='parts', expire=60)
 def get_offers_by_color(id, color):
     color = color.lower()
     part = PARTS_COLLECTION.find_one({"_id": str(id)})
@@ -148,7 +180,7 @@ def get_offers_by_color(id, color):
     return jsonify(offers)
 
 @parts_api.route('/<id>/colors', methods=['GET'])
-@redis_cache(module='colors', expire=60)
+@redis_cache(module='parts', expire=60)
 def get_part_overview(id):
     part = PARTS_COLLECTION.find_one({"_id": str(id)}, {"_id": 1, "colors": 1})
 
