@@ -1,13 +1,13 @@
 from flask import Flask, Blueprint, request, jsonify
 from pymongo.errors import DuplicateKeyError
-from pymongo import MongoClient
+from pymongo import MongoClient, WriteConcern
 import redis
 from dotenv import load_dotenv
 import os
 import time
 load_dotenv()
 
-CLIENT = MongoClient(os.getenv('MONGO_URI'))
+CLIENT = MongoClient(os.getenv('MONGO_URI'), w="majority", journal=True)
 REDIS = redis.Redis(host=os.getenv('REDIS_HOST'), port=os.getenv('REDIS_PORT'), decode_responses=True)
 DB = CLIENT['bricks']
 

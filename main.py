@@ -11,11 +11,10 @@ app.register_blueprint(parts_api, url_prefix='/parts')
 app.register_blueprint(colors_api, url_prefix='/colors')
 app.register_blueprint(sets_api, url_prefix='/sets')
 app.register_blueprint(stats_api, url_prefix='/stats')
-SETS_COLLECTION = DB['sets']
 
 @app.route('/')
 def index():
-    return str(SETS_COLLECTION.count_documents({}))
+    return "Welcome to Brickscrapper"
 
 if __name__ == '__main__':
     app.run(debug=True)
