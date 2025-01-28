@@ -3,7 +3,7 @@ from imports import *
 sets_api = Blueprint('sets_api', __name__)
 SET_OVERVIEWS_COLLECTION = DB['set_overviews']
 SET_OFFERS_COLLECTION = DB['set_offers']
-SET_SIMILARITIES_COLLECTION = DB['set_similarities']
+SET_SIMILARITIES_COLLECTION = DB['set_similiarities']
 SET_CONTENTS_COLLECTION = DB['set_contents']
 PARTS_COLLECTION = DB['parts']
 
