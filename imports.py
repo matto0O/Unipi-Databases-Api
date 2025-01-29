@@ -7,7 +7,7 @@ import os
 import time
 load_dotenv()
 
-CLIENT = MongoClient(os.getenv('MONGO_URI'), w="majority", journal=True)
+CLIENT = MongoClient(os.getenv('MONGO_URI'), w="majority", journal=True, readPreference='primaryPreferred')
 REDIS = redis.Redis(host=os.getenv('REDIS_HOST'), port=os.getenv('REDIS_PORT'), decode_responses=True)
 DB = CLIENT['bricks']
 
