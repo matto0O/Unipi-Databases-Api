@@ -12,6 +12,11 @@ SET_SIMILARITIES_COLLECTION = DB['set_similarities']
 SET_OFFERS_COLLECTION = DB['set_offers']
 COLORS_COLLECTION = DB['colors']
 
+#collor maping 
+def get_color_name_map():
+    """uptake all colors and map them {id: name}."""
+    return {str(color['_id']): color['name'] for color in COLORS_COLLECTION.find()} 
+
 def get_set_statistics():
     statistics = {}
 
@@ -73,6 +78,7 @@ def get_set_statistics():
 
     return statistics
 
+
 def get_part_statistics():
     statistics = {}
 
@@ -80,12 +86,13 @@ def get_part_statistics():
     total_parts = PARTS_COLLECTION.count_documents({})
 
     # Distribution of colors among parts
+    color_name_map = get_color_name_map()
     color_counts = PARTS_COLLECTION.aggregate([
         {"$project": {"colors": {"$objectToArray": "$colors"}}},
         {"$unwind": "$colors"},
         {"$group": {"_id": "$colors.k", "count": {"$sum": {"$size": "$colors.v"}}}}
     ])
-    colors_distribution = {doc["_id"]: doc["count"] for doc in color_counts}
+    colors_distribution = {color_name_map.get(doc["_id"], "Unknown"): doc["count"] for doc in color_counts}
 
     # Part with the most offers
     part_with_most_offers = next(PARTS_COLLECTION.aggregate([
@@ -102,11 +109,42 @@ def get_part_statistics():
     ]), None)
 
     # Cheapest part based on offers
+
+
     cheapest_part = next(PARTS_COLLECTION.aggregate([
-        {"$project": {"_id": 1, "min_price": {"$min": {"$map": {"input": {"$objectToArray": "$colors"}, "as": "color", "in": {"$min": {"$map": {"input": "$$color.v", "as": "offer", "in": "$$offer.Price"}}}}}}}},
-        {"$sort": {"min_price": 1}},
-        {"$limit": 1}
+    {"$project": {
+        "_id": 1,
+        "min_offer": {
+            "$min": {
+                "$filter": {
+                    "input": {
+                        "$map": {
+                            "input": {"$objectToArray": "$colors"},
+                            "as": "color",
+                            "in": {
+                                "$min": {
+                                    "$map": {
+                                        "input": "$$color.v",  # Offers for the color
+                                        "as": "offer",
+                                        "in": "$$offer.Price"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "as": "price",
+                    "cond": {"$ne": ["$$price", None]}  # Filter out None values
+                }
+            }
+        }
+    }},
+     {"$match": {"min_offer": {"$gt": 0}}},  # Ensure we exclude 0 as a price
+     {"$sort": {"min_offer": 1}},  # Sort by the min_offer in ascending order
+     {"$limit": 1}  # Limit to only one result
     ]), None)
+
+    if cheapest_part:
+       cheapest_part["_id"] = str(cheapest_part["_id"])
 
     # Most expensive part based on offers
     most_expensive_part = next(PARTS_COLLECTION.aggregate([

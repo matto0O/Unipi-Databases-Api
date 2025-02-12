@@ -14,10 +14,18 @@ def get_colors():
 @colors_api.route('/<id>')
 @redis_cache(module='colors')
 def get_color(id):
-    result = list(COLORS_COLLECTION.find({"_id": int(id)}))
-    if not result:
-        return jsonify({'error': 'Color not found'}), 404
-    return jsonify(result) 
+    try:
+        color = COLORS_COLLECTION.find_one({"_id": int(id)})
+        if not color:
+            response = jsonify({'error': 'Color not found'})
+            response.status_code = 404
+            return response
+        color['_id'] = str(color['_id'])
+        response = jsonify(color)
+        response.status_code = 200
+        return response
+    except Exception as e:
+        return jsonify({'error': f'Internal server error: {str(e)}'}), 500
 
 #  add new color (include id in request)
 @colors_api.route('', methods=['POST'])
