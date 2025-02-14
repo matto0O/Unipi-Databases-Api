@@ -6,6 +6,7 @@ from stats import stats_api
 from imports import *
 
 app = Flask(__name__)
+app.config['SECRET_KEY'] = 'super_secret_key'
 app.register_blueprint(users_api, url_prefix='/users')
 app.register_blueprint(parts_api, url_prefix='/parts')
 app.register_blueprint(colors_api, url_prefix='/colors')
