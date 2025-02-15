@@ -4,14 +4,20 @@ parts_api = Blueprint('parts_api', __name__)
 PARTS_COLLECTION = DB['parts']
 
 @parts_api.route('')
-@redis_cache(module='parts', expire=600)
 def get_parts():
-    result = list(PARTS_COLLECTION.find())
-    for part in result:
-        part['_id'] = str(part['_id'])
-        part['colors'] = {color.capitalize(): value for color, value in part['colors'].items()}
+    limit = request.args.get('limit', default=25, type=int)
 
-    return jsonify(result)
+    @redis_cache(module='parts', expire=600, limit=limit)
+    def sub_get_parts():
+        result = list(PARTS_COLLECTION.find().limit(limit))
+        new_res = []
+        for part in result:
+            part['_id'] = str(part['_id'])
+            part['colors'] = [k for k in part['colors'].keys()]
+            new_res.append(part)
+        return jsonify(new_res), 200
+    
+    return sub_get_parts()
 
 @parts_api.route('/<id>')
 @redis_cache(module='parts', expire=60)
@@ -20,42 +26,39 @@ def get_part(id):
     if not result:
         return jsonify({'error': 'Part not found'}), 404
     
-    for part in result:
-        part['_id'] = str(part['_id'])
-        part['colors'] = {color.capitalize(): value for color, value in part['colors'].items()}
-    return jsonify(result)
+    return jsonify(result), 200
 
-@parts_api.route('/colors/<color>', defaults={'limit': None})
-@parts_api.route('/colors/<color>?limit=<limit>')
-@redis_cache(module='parts', expire=60)
-def get_parts_by_color(color, limit):
-    color_name = REDIS.get(f"colors:{color}:name")
-    if not color_name:
-        return jsonify({'error': 'Color not found'}), 404
-    
-    aggregation = [
-        {
-            '$match': {
-                f'colors.{color_name}': {
-                    '$exists': True
-                }
-            }
-        }, {
-            '$project': {
-                'colors': {
-                    color_name: 1
-                }
-            }
-        }
-    ]
+@parts_api.route('/colors/<color>')
+def get_parts_by_color(color):
+    limit = request.args.get('limit', default=25, type=int)
 
-    if limit:
-        try:
-            aggregation.append({'$limit': int(limit)})
-        except ValueError:
+    @redis_cache(module='parts', expire=60, limit=limit)
+    def sub_get_by_color(color):
+        
+        if not limit:
             return jsonify({'error': 'Invalid limit value. Must be an integer.'}), 400
+        
+        aggregation = [
+            {
+                '$match': {
+                    f'colors.{color}': {
+                        '$exists': True
+                    }
+                }
+            }, {
+                '$project': {
+                    'colors': {
+                        color: 1
+                    }
+                }
+            },
+            {'$limit': int(limit)}
+        ]
+
+        
+        return jsonify(list(PARTS_COLLECTION.aggregate(aggregation))), 200
     
-    return jsonify(list(PARTS_COLLECTION.aggregate(aggregation)))
+    return sub_get_by_color(color)
 
 @parts_api.route('/<id>', methods=['PUT'])
 def update_part(id):
@@ -70,15 +73,7 @@ def update_part(id):
         return jsonify({'error': f'Missing required fields: {", ".join(missing_fields)}'}), 400
 
     if not isinstance(data['colors'], dict):
-        return jsonify({'error': "'colors' must be a dictionary with color names as keys and arrays of objects as values."}), 400
-
-    # Normalize colors directly in the method
-    normalized_colors = {}
-    for color, offers in data['colors'].items():
-        normalized_color = color.capitalize()  
-        normalized_colors[normalized_color] = offers
-
-    data['colors'] = normalized_colors
+        return jsonify({'error': "'colors' must be a dictionary with color ids as keys and arrays of objects as values."}), 400
 
     for color, offers in data['colors'].items():
         if not isinstance(offers, list):
@@ -104,9 +99,9 @@ def update_part(id):
     if result.matched_count == 0:
         return jsonify({'error': 'Part not found'}), 404
 
-    return jsonify({'modified_count': result.modified_count})
+    return jsonify({'modified_count': result.modified_count}), 200
 
-# Route to create a new part
+
 @parts_api.route('', methods=['POST'])
 def create_part():
     data = request.json
@@ -120,15 +115,8 @@ def create_part():
         return jsonify({'error': f'Missing required fields: {", ".join(missing_fields)}'}), 400
 
     if not isinstance(data['colors'], dict):
-        return jsonify({'error': "'colors' must be a dictionary with color names as keys and arrays of objects as values."}), 400
+        return jsonify({'error': "'colors' must be a dictionary with color id as keys and arrays of objects as values."}), 400
 
-    # Normalizacja kolorów bezpośrednio w metodzie
-    normalized_colors = {}
-    for color, offers in data['colors'].items():
-        normalized_color = color.capitalize()  # Normalizowanie koloru na pierwszą wielką literę
-        normalized_colors[normalized_color] = offers
-
-    data['colors'] = normalized_colors
 
     for color, offers in data['colors'].items():
         if not isinstance(offers, list):
@@ -148,7 +136,7 @@ def create_part():
 
     try:
         result = PARTS_COLLECTION.insert_one(data)
-        return jsonify({'inserted_id': str(result.inserted_id)}), 201
+        return jsonify({'inserted_id': str(result.inserted_id)}), 200
     except DuplicateKeyError:
         return jsonify({'error': f"Part with _id '{data['_id']}' already exists."}), 409
     except Exception as e:
@@ -160,7 +148,7 @@ def delete_part(id):
     result = PARTS_COLLECTION.delete_one({"_id": str(id)})
     if result.deleted_count == 0:
         return jsonify({'error': 'Part not found'}), 404
-    return jsonify({'deleted_count': result.deleted_count})
+    return jsonify({'deleted_count': result.deleted_count}), 200
 
 @parts_api.route('/offers/<id>/<color>', methods=['GET'])
 @redis_cache(module='parts', expire=60)
@@ -171,13 +159,13 @@ def get_offers_by_color(id, color):
     if not part:
         return jsonify({'error': 'Part not found'}), 404
 
-    colors = {k.lower(): v for k, v in part['colors'].items()}
+    colors = part['colors']
 
     if color not in colors:
         return jsonify({'error': f'No offers found for color "{color}"'}), 404
 
     offers = colors[color]
-    return jsonify(offers)
+    return jsonify(offers), 200
 
 @parts_api.route('/<id>/colors', methods=['GET'])
 @redis_cache(module='parts', expire=60)
@@ -206,7 +194,7 @@ def add_colors_to_part(id):
     if isinstance(colors_input, str):
         colors_to_add = [colors_input.strip().capitalize()]
     elif isinstance(colors_input, list) and all(isinstance(color, str) for color in colors_input):
-        colors_to_add = [color.strip().capitalize() for color in colors_input]
+        colors_to_add = [str(colors_input) for color in colors_input]
     else:
         return jsonify({'error': "'colors' must be a string or a list of strings."}), 400
 
@@ -216,7 +204,7 @@ def add_colors_to_part(id):
         return jsonify({'error': 'Part not found'}), 404
 
     part_colors = part.get('colors', {})
-    existing_colors = {color.capitalize() for color in part_colors.keys()}
+    existing_colors = part_colors.keys()
 
     new_colors = [color for color in colors_to_add if color not in existing_colors]
 
@@ -228,7 +216,7 @@ def add_colors_to_part(id):
 
     PARTS_COLLECTION.update_one({"_id": str(id)}, {"$set": {"colors": part_colors}})
 
-    return jsonify({'message': f'Colors added to part: {", ".join(new_colors)}.'}), 201
+    return jsonify({'message': f'Colors added to part: {", ".join(new_colors)}.'}), 200
 
 
 
@@ -244,7 +232,7 @@ def delete_colors_from_part(id):
     if isinstance(colors_input, str):
         colors_to_delete = [colors_input.strip().capitalize()]
     elif isinstance(colors_input, list) and all(isinstance(color, str) for color in colors_input):
-        colors_to_delete = [color.strip().capitalize() for color in colors_input]
+        colors_to_delete = [str(color) for color in colors_input]
     else:
         return jsonify({'error': "'colors' field must be a string or a list of strings."}), 400
 
@@ -283,7 +271,7 @@ def add_offer_to_part(id):
     colors = data['colors']
 
     if not isinstance(colors, dict):
-        return jsonify({'error': "'colors' must be a dictionary with color names as keys and lists of offers as values."}), 400
+        return jsonify({'error': "'colors' must be a dictionary with color ids as keys and lists of offers as values."}), 400
 
     for color, offers in colors.items():
         if not isinstance(offers, list):
@@ -307,16 +295,15 @@ def add_offer_to_part(id):
         part['colors'] = {}
 
     for color, offers in colors.items():
-        normalized_color = color.capitalize()
-        if normalized_color not in part['colors']:
-            part['colors'][normalized_color] = []
+        if color not in part['colors']:
+            part['colors'][color] = []
 
-        part['colors'][normalized_color].extend(offers)
-        part['colors'][normalized_color].sort(key=lambda x: x['Price'])
+        part['colors'][color].extend(offers)
+        part['colors'][color].sort(key=lambda x: x['Price'])
 
     PARTS_COLLECTION.update_one({"_id": str(id)}, {"$set": {"colors": part['colors']}})
 
-    return jsonify({'message': 'Offers added successfully.'}), 201
+    return jsonify({'message': 'Offers added successfully.'}), 200
 
 @parts_api.route('/<id>/offers', methods=['DELETE'])
 def delete_offer_from_part(id):
@@ -329,7 +316,7 @@ def delete_offer_from_part(id):
     link = next((data[k] for k in data if k.lower() == 'link'), None)
 
     if isinstance(color_input, str):
-        color = color_input.strip().capitalize()
+        color = color_input.strip()
     else:
         return jsonify({'error': "'color' must be a single string."}), 400
 
