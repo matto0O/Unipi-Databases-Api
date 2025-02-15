@@ -180,7 +180,7 @@ def get_part_overview(id):
     return jsonify({
         "_id": part["_id"],
         "colors": color_names
-    })
+    }), 200
 
 @parts_api.route('/<id>/colors', methods=['POST'])
 def add_colors_to_part(id):
