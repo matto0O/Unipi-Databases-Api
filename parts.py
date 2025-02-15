@@ -11,27 +11,63 @@ def get_color_name_map():
 
 @parts_api.route('')
 def get_parts():
-    color_map = get_color_name_map()
-    result = list(PARTS_COLLECTION.find())
+    limit = request.args.get('limit', default=25, type=int)
 
-    for part in result:
-        part['_id'] = str(part['_id'])
-        part['colors'] = {color_map.get(str(color_id), f"Unknown ({color_id})"): value for color_id, value in part['colors'].items()}
+    @redis_cache(module='parts', expire=600, limit=limit)
+    def sub_get_parts():
+        result = list(PARTS_COLLECTION.find().limit(limit))
+        new_res = []
+        for part in result:
+            part['_id'] = str(part['_id'])
+            part['colors'] = [k for k in part['colors'].keys()]
+            new_res.append(part)
+        return jsonify(new_res), 200
+    
+    return sub_get_parts()
 
-    return jsonify(result)
 
 @parts_api.route('/<id>')
+@redis_cache(module='parts', expire=60)
 def get_part(id):
     color_map = get_color_name_map()
     result = PARTS_COLLECTION.find_one({"_id": str(id)})
 
     if not result:
         return jsonify({'error': 'Part not found'}), 404
+    
+    return jsonify(result), 200
 
-    result['_id'] = str(result['_id'])
-    result['colors'] = {color_map.get(str(color_id), f"Unknown ({color_id})"): value for color_id, value in result['colors'].items()}
+@parts_api.route('/colors/<color>')
+def get_parts_by_color(color):
+    limit = request.args.get('limit', default=25, type=int)
 
-    return jsonify(result)
+    @redis_cache(module='parts', expire=60, limit=limit)
+    def sub_get_by_color(color):
+        
+        if not limit:
+            return jsonify({'error': 'Invalid limit value. Must be an integer.'}), 400
+        
+        aggregation = [
+            {
+                '$match': {
+                    f'colors.{color}': {
+                        '$exists': True
+                    }
+                }
+            }, {
+                '$project': {
+                    'colors': {
+                        color: 1
+                    }
+                }
+            },
+            {'$limit': int(limit)}
+        ]
+
+        
+        return jsonify(list(PARTS_COLLECTION.aggregate(aggregation))), 200
+    
+    return sub_get_by_color(color)
 
 def validate_part_data(data, is_update=False):
     if not isinstance(data, dict):
@@ -46,44 +82,48 @@ def validate_part_data(data, is_update=False):
         return "Invalid fields detected. Only '_id' and 'colors' are allowed."
     
     if not isinstance(data['colors'], dict):
-        return "'colors' must be a dictionary with color names or IDs as keys and lists of offers as values."
-    
-    # Pobranie mapy kolorów {_id: name} i {name: _id}
-    color_map_id_to_name = get_color_name_map()
-    color_map_name_to_id = {v: k for k, v in color_map_id_to_name.items()}
-    
-    normalized_colors = {}
-
-    for color_key, offers in data['colors'].items():
-        if isinstance(color_key, str) and color_key.capitalize() in color_map_name_to_id:
-            color_id = color_map_name_to_id[color_key.capitalize()]
-        elif isinstance(color_key, (int, str)) and str(color_key) in color_map_id_to_name:
-            color_id = str(color_key)
-        else:
-            return f"Invalid color: '{color_key}'. It must be a valid name or existing ID in the database."
+        return jsonify({'error': "'colors' must be a dictionary with color ids as keys and arrays of objects as values."}), 400
 
         if not isinstance(offers, list):
             return f"'{color_key}' should have a list of offers."
         
         for offer in offers:
             if not isinstance(offer, dict):
-                return f"Each offer for color '{color_key}' should be a dictionary."
-            
-            expected_keys = {'Link', 'Price', 'Quantity'}
-            if set(offer.keys()) != expected_keys:
-                return f"Each offer for color '{color_key}' must include only 'Link', 'Price', and 'Quantity'."
-            
-            if not isinstance(offer['Link'], str) or not offer['Link'].startswith("http"):
-                return f"The 'Link' in offer for color '{color_key}' must be a valid URL."
-            if not isinstance(offer['Price'], (int, float)):
-                return f"The 'Price' in offer for color '{color_key}' must be a number."
-            if not isinstance(offer['Quantity'], int):
-                return f"The 'Quantity' in offer for color '{color_key}' must be an integer."
+                return jsonify({'error': f"Each offer for color '{color}' should be a dictionary."}), 400
 
-        normalized_colors[color_id] = offers
+            if 'Link' in offer:
+                if 'Price' not in offer or 'Quantity' not in offer:
+                    return jsonify({'error': f"If a 'Link' is provided for color '{color}', both 'Price' and 'Quantity' must be present."}), 400
+                
+                if not isinstance(offer['Price'], (int, float)):
+                    return jsonify({'error': f"The 'Price' in offer for color '{color}' must be a number."}), 400
+                if not isinstance(offer['Quantity'], int):
+                    return jsonify({'error': f"The 'Quantity' in offer for color '{color}' must be an integer."}), 400
+            else:
+                if 'Price' in offer or 'Quantity' in offer:
+                    return jsonify({'error': f"If no 'Link' is provided for color '{color}', 'Price' and 'Quantity' cannot be specified."}), 400
 
-    data['colors'] = normalized_colors
-    return None
+    result = PARTS_COLLECTION.update_one({"_id": str(id)}, {"$set": data})
+    if result.matched_count == 0:
+        return jsonify({'error': 'Part not found'}), 404
+
+    return jsonify({'modified_count': result.modified_count}), 200
+
+
+@parts_api.route('', methods=['POST'])
+def create_part():
+    data = request.json
+
+    if not data or not isinstance(data, dict):
+        return jsonify({'error': 'Invalid input. JSON body is required.'}), 400
+
+    required_fields = ['_id', 'colors']
+    missing_fields = [field for field in required_fields if field not in data]
+    if missing_fields:
+        return jsonify({'error': f'Missing required fields: {", ".join(missing_fields)}'}), 400
+
+    if not isinstance(data['colors'], dict):
+        return jsonify({'error': "'colors' must be a dictionary with color id as keys and arrays of objects as values."}), 400
 
 @parts_api.route('/<id>', methods=['PUT'])
 def update_part(id):
@@ -110,7 +150,7 @@ def create_part():
     
     try:
         result = PARTS_COLLECTION.insert_one(data)
-        return jsonify({'inserted_id': str(result.inserted_id)}), 201
+        return jsonify({'inserted_id': str(result.inserted_id)}), 200
     except DuplicateKeyError:
         return jsonify({'error': f"Part with _id '{data['_id']}' already exists."}), 409
     except Exception as e:
@@ -122,9 +162,10 @@ def delete_part(id):
     result = PARTS_COLLECTION.delete_one({"_id": str(id)})
     if result.deleted_count == 0:
         return jsonify({'error': 'Part not found'}), 404
-    return jsonify({'deleted_count': result.deleted_count})
+    return jsonify({'deleted_count': result.deleted_count}), 200
 
 @parts_api.route('/offers/<id>/<color>', methods=['GET'])
+@redis_cache(module='parts', expire=60)
 def get_offers_by_color(id, color):
     color = color.lower()
     color_map = {v.lower(): k for k, v in get_color_name_map().items()}  # Odwrócona mapa
@@ -139,14 +180,16 @@ def get_offers_by_color(id, color):
     if not part:
         return jsonify({'error': 'Part not found'}), 404
 
-    offers = part['colors'].get(str(color_id), [])
-    
-    if not offers:
+    colors = part['colors']
+
+    if color not in colors:
         return jsonify({'error': f'No offers found for color "{color}"'}), 404
 
-    return jsonify(offers)
+    offers = colors[color]
+    return jsonify(offers), 200
 
 @parts_api.route('/<id>/colors', methods=['GET'])
+@redis_cache(module='parts', expire=60)
 def get_part_overview(id):
     color_map = get_color_name_map()
     part = PARTS_COLLECTION.find_one({"_id": str(id)}, {"_id": 1, "colors": 1})
@@ -173,7 +216,7 @@ def add_colors_to_part(id):
     if isinstance(colors_input, str):
         colors_to_add = [colors_input.strip().capitalize()]
     elif isinstance(colors_input, list) and all(isinstance(color, str) for color in colors_input):
-        colors_to_add = [color.strip().capitalize() for color in colors_input]
+        colors_to_add = [str(colors_input) for color in colors_input]
     else:
         return jsonify({'error': "'colors' must be a string or a list of strings."}), 400
 
@@ -192,6 +235,7 @@ def add_colors_to_part(id):
         return jsonify({'error': 'Part not found'}), 404
 
     part_colors = part.get('colors', {})
+    existing_colors = part_colors.keys()
 
     new_colors = {color_id: [] for color_id in color_ids_to_add if color_id not in part_colors}
 
@@ -202,10 +246,7 @@ def add_colors_to_part(id):
 
     PARTS_COLLECTION.update_one({"_id": str(id)}, {"$set": {"colors": part_colors}})
 
-    added_color_names = [color for color, color_id in color_map.items() if color_id in new_colors]
-    
-    return jsonify({'message': f'Colors added to part: {", ".join(added_color_names)}.'}), 201
-
+    return jsonify({'message': f'Colors added to part: {", ".join(new_colors)}.'}), 200
 
 
 @parts_api.route('/<id>/colors', methods=['DELETE'])
@@ -219,7 +260,7 @@ def delete_colors_from_part(id):
     if isinstance(colors_input, str):
         colors_to_delete = [colors_input.strip().capitalize()]
     elif isinstance(colors_input, list) and all(isinstance(color, str) for color in colors_input):
-        colors_to_delete = [color.strip().capitalize() for color in colors_input]
+        colors_to_delete = [str(color) for color in colors_input]
     else:
         return jsonify({'error': "'colors' field must be a string or a list of strings."}), 400
 
@@ -263,7 +304,7 @@ def add_offer_to_part(id):
     colors = data['colors']
 
     if not isinstance(colors, dict):
-        return jsonify({'error': "'colors' must be a dictionary with color names as keys and lists of offers as values."}), 400
+        return jsonify({'error': "'colors' must be a dictionary with color ids as keys and lists of offers as values."}), 400
 
     for color, offers in colors.items():
         if not isinstance(offers, list):
@@ -287,16 +328,15 @@ def add_offer_to_part(id):
         part['colors'] = {}
 
     for color, offers in colors.items():
-        normalized_color = color.capitalize()
-        if normalized_color not in part['colors']:
-            part['colors'][normalized_color] = []
+        if color not in part['colors']:
+            part['colors'][color] = []
 
-        part['colors'][normalized_color].extend(offers)
-        part['colors'][normalized_color].sort(key=lambda x: x['Price'])
+        part['colors'][color].extend(offers)
+        part['colors'][color].sort(key=lambda x: x['Price'])
 
     PARTS_COLLECTION.update_one({"_id": str(id)}, {"$set": {"colors": part['colors']}})
 
-    return jsonify({'message': 'Offers added successfully.'}), 201
+    return jsonify({'message': 'Offers added successfully.'}), 200
 
 @parts_api.route('/<id>/offers', methods=['DELETE'])
 def delete_offer_from_part(id):
@@ -313,11 +353,8 @@ def delete_offer_from_part(id):
     color_map_id_to_name = get_color_name_map()
     color_map_name_to_id = {v: k for k, v in color_map_id_to_name.items()}
 
-    # Normalize the color input (convert name to ID if needed)
-    if isinstance(color_input, str) and color_input.capitalize() in color_map_name_to_id:
-        color_id = color_map_name_to_id[color_input.capitalize()]
-    elif isinstance(color_input, (int, str)) and str(color_input) in color_map_id_to_name:
-        color_id = str(color_input)
+    if isinstance(color_input, str):
+        color = color_input.strip()
     else:
         return jsonify({'error': f"Invalid color: '{color_input}'. It must be a valid name or existing ID in the database."}), 400
 

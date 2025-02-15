@@ -1,35 +1,28 @@
 from imports import *
 
 colors_api = Blueprint('colors_api', __name__)
-COLORS_COLLECTION = DB['colors']
 
 @colors_api.route('')
 @redis_cache(module='colors')
 def get_colors():
-    result = list(COLORS_COLLECTION.find())
-    for color in result:
-        color['_id'] = str(color['_id'])
-    return jsonify(result) 
+    results = []
+    for key in REDIS.keys("colors:*"):
+        values = REDIS.hgetall(key)
+        values["_id"] = key.split(":")[1]
+        results.append(values)
+    return jsonify(results), 200
 
 @colors_api.route('/<id>')
 @redis_cache(module='colors')
 def get_color(id):
-    try:
-        color = COLORS_COLLECTION.find_one({"_id": int(id)})
-        if not color:
-            response = jsonify({'error': 'Color not found'})
-            response.status_code = 404
-            return response
-        color['_id'] = str(color['_id'])
-        response = jsonify(color)
-        response.status_code = 200
-        return response
-    except Exception as e:
-        return jsonify({'error': f'Internal server error: {str(e)}'}), 500
+    result = REDIS.hgetall(f'colors:{id}')
+    result["_id"] = id
+    if not result:
+        return jsonify({'error': 'Color not found'}), 404
+    return jsonify(result), 200
 
 #  add new color (include id in request)
 @colors_api.route('', methods=['POST'])
-@redis_cache(module='colors')
 def add_color():
     try:
         new_color = request.get_json()
@@ -43,26 +36,20 @@ def add_color():
 
         new_color['_id'] = int(new_color['_id'])
 
-        existing_color = COLORS_COLLECTION.find_one({'_id': new_color['_id']})
+        existing_color = REDIS.keys(f'colors:{new_color["_id"]}')
         if existing_color:
             return jsonify({'error': f'Color with _id {new_color["_id"]} already exists'}), 409
 
-        COLORS_COLLECTION.insert_one(new_color)
+        REDIS.hmset(f'colors:{new_color["_id"]}', new_color)
 
         new_color['_id'] = str(new_color['_id'])
-        response = jsonify(new_color)
-        response.status_code = 201
-        return response
+        return jsonify(new_color), 200
 
     except Exception as e:
-
         return jsonify({'error': f'Internal server error: {str(e)}'}), 500
 
 
 @colors_api.route('/<id>', methods=['PUT'])
-@redis_cache(module='colors')
-
-
 def update_color(id):
     updated_data = request.get_json()
 
@@ -70,34 +57,18 @@ def update_color(id):
         return jsonify({'error': 'Input must be a JSON object'}), 400
 
     try:
-        result = COLORS_COLLECTION.update_one({"_id": int(id)}, {"$set": updated_data})
-
-        if result.matched_count == 0:
-            return jsonify({'error': 'Color not found'}), 404
-
-        updated_color = COLORS_COLLECTION.find_one({"_id": int(id)})
-        updated_color['_id'] = str(updated_color['_id'])
-
-        response = jsonify({'message': 'Color updated successfully', 'color': updated_color})
-        response.status_code = 200
-        return response
+        REDIS.hmset(f'colors:{id}', updated_data)
+        return jsonify({'message': 'Color updated successfully', 'color': id}), 200
     
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 
 @colors_api.route('/<id>', methods=['DELETE'])
-@redis_cache(module='colors')
 def delete_color(id):
     try:
-        result = COLORS_COLLECTION.delete_one({"_id": int(id)})
-
-        if result.deleted_count == 0:
-            return jsonify({'error': 'Color not found'}), 404
-            
-        response = jsonify({'message': 'Color deleted successfully'})
-        response.status_code = 201
-        return response
+        REDIS.hdel(f'colors:{id}')
+        return jsonify({'message': 'Color deleted successfully'}), 200
     
     except Exception as e:
         return jsonify({'error': str(e)}), 500

@@ -3,19 +3,24 @@ from imports import *
 sets_api = Blueprint('sets_api', __name__)
 SET_OVERVIEWS_COLLECTION = DB['set_overviews']
 SET_OFFERS_COLLECTION = DB['set_offers']
-SET_SIMILARITIES_COLLECTION = DB['set_similarities']
+SET_SIMILARITIES_COLLECTION = DB['set_similiarities']
 SET_CONTENTS_COLLECTION = DB['set_contents']
 PARTS_COLLECTION = DB['parts']
 
 @sets_api.route('')
 def get_sets():
-    result = list(SET_OVERVIEWS_COLLECTION.find())
-    for set in result:
-        set['_id'] = str(set['_id'])    
-    return jsonify(result)
+    limit = request.args.get('limit', 25)
+
+    @redis_cache(module='colors', expire=600, limit=limit)
+    def sub_get_sets():
+        result = list(SET_OVERVIEWS_COLLECTION.find().limit(int(limit)))
+        for set in result:
+            set['_id'] = str(set['_id'])    
+        return jsonify(result)
+    return sub_get_sets()
 
 @sets_api.route('/<id>')
-# @redis_cache(module='sets')
+@redis_cache(module='sets', expire=600)
 def get_set(id):
     result = SET_OVERVIEWS_COLLECTION.find_one({"_id": str(id)})
     offers = SET_OFFERS_COLLECTION.find_one({"_id": str(id)})
@@ -35,7 +40,6 @@ def get_set(id):
 @sets_api.route('/<id>/offers', methods=['PUT', 'POST'])
 def update_set_offers(id):
     data = request.json
-    print('dupa')
 
     if not data or not isinstance(data, list):
         return jsonify({'error': 'Invalid input. JSON array body is required.'}), 400
@@ -51,10 +55,18 @@ def update_set_offers(id):
     
     min_price = data[0]["price"]
 
-    r1 = SET_OVERVIEWS_COLLECTION.update_one({"_id": id}, {"$set": {"min_price": min_price}}, upsert=True)
-    result = SET_OFFERS_COLLECTION.update_one({"_id": id}, {"$set": {"offers": data}}, upsert=True)
+    def transaction_callback(session, data, id, min_price):
+        r1 = SET_OVERVIEWS_COLLECTION.update_one({"_id": id}, {"$set": {"min_price": min_price}}, upsert=True)
+        result = SET_OFFERS_COLLECTION.update_one({"_id": id}, {"$set": {"offers": data}}, upsert=True)
 
-    return jsonify(r1.modified_count, result.modified_count)
+    try:
+        with CLIENT.start_session() as session:
+            with session.start_transaction():
+                transaction_callback(session, data, id, min_price)
+                session.commit_transaction()
+        return jsonify({'message': 'Offers updated successfully.'}), 200
+    except Exception as e:
+        return jsonify({'error': 'An unexpected error occurred.', 'details': str(e)}), 500
 
 @sets_api.route('', methods=['POST'])
 def create_set():
@@ -71,7 +83,6 @@ def create_set():
     if not isinstance(data['parts'], dict):
         return jsonify({'error': "'parts' must be a dictionary with part IDs as keys and objects as values."}), 400
 
-    # Very time consuming part here, but at the same time, scarecely used
     sim_scores = []
     part_keys = data['parts'].keys()
     for other_set_contents in SET_CONTENTS_COLLECTION.find():
@@ -101,52 +112,43 @@ def create_set():
                 PARTS_COLLECTION.insert_one(part_data)
             except DuplicateKeyError:
                 pass 
-    
-    try:
-        SET_OFFERS_COLLECTION.insert_one({"_id": data["_id"], "offers": []})
-    except DuplicateKeyError:
-        return jsonify({'error': f"Set offers with _id '{data['_id']}' already exist."}), 409
-
-    try: 
-        SET_CONTENTS_COLLECTION.insert_one({"_id": data["_id"], "parts": data["parts"]})
-    except DuplicateKeyError:
-        return jsonify({'error': f"Set contents with _id '{data['_id']}' already exist."}), 409
-    
-    try:
-        SET_SIMILARITIES_COLLECTION.insert_one({"_id": data["_id"], "sim_scores": data["sim_scores"]})
-    except DuplicateKeyError:
-        return jsonify({'error': f"Similarity score with _id '{data['_id']}' already exists."}), 409
 
     try:
-        del data['parts']
-        result = SET_OVERVIEWS_COLLECTION.insert_one(data)
-        return jsonify({'inserted_id': str(result.inserted_id)}), 201
-    except DuplicateKeyError:
-        return jsonify({'error': f"Set with _id '{data['_id']}' already exists."}), 409
+        with CLIENT.start_session() as session:
+            with session.start_transaction():
+                SET_OFFERS_COLLECTION.insert_one({"_id": data["_id"], "offers": []}, session=session)
+                SET_CONTENTS_COLLECTION.insert_one({"_id": data["_id"], "parts": data["parts"]}, session=session)
+                SET_SIMILARITIES_COLLECTION.insert_one({"_id": data["_id"], "sim_scores": data["sim_scores"]}, session=session)
+                del data['parts']
+                result = SET_OVERVIEWS_COLLECTION.insert_one(data, session=session)
+                session.commit_transaction()
+                return jsonify({'inserted_id': str(result.inserted_id)}), 201
+    except DuplicateKeyError as e:
+        return jsonify({'error': f"Duplicate key error: {str(e)}"}), 409
     except Exception as e:
         return jsonify({'error': 'An unexpected error occurred.', 'details': str(e)}), 500
 
 @sets_api.route('/<id>', methods=['DELETE'])
 def delete_set(id):
-    result = SET_OVERVIEWS_COLLECTION.delete_one({"_id": id})
-    if result.deleted_count == 0:
-        return jsonify({'error': 'Set not found'}), 404
-    
-    result = SET_SIMILARITIES_COLLECTION.delete_one({"_id": id})
-    if result.deleted_count == 0:
-        return jsonify({'error': 'Set not found'}), 404
-    
-    result = SET_OFFERS_COLLECTION.delete_one({"_id": id})
-    if result.deleted_count == 0:
-        return jsonify({'error': 'Set not found'}), 404
-    
-    result = SET_CONTENTS_COLLECTION.delete_one({"_id": id})
-    if result.deleted_count == 0:
-        return jsonify({'error': 'Set not found'}), 404
-    
-    return jsonify({'deleted_count': result.deleted_count})
+    try:
+        with CLIENT.start_session() as session:
+            with session.start_transaction():
+                result = SET_OVERVIEWS_COLLECTION.delete_one({"_id": id}, session=session)
+                if result.deleted_count == 0:
+                    session.abort_transaction()
+                    return jsonify({'error': 'Set not found'}), 404
+
+                SET_SIMILARITIES_COLLECTION.delete_one({"_id": id}, session=session)
+                SET_OFFERS_COLLECTION.delete_one({"_id": id}, session=session)
+                SET_CONTENTS_COLLECTION.delete_one({"_id": id}, session=session)
+                
+                session.commit_transaction()
+                return jsonify({'deleted_count': result.deleted_count})
+    except Exception as e:
+        return jsonify({'error': 'An unexpected error occurred.', 'details': str(e)}), 500
 
 @sets_api.route('/profitable/<x>')
+@redis_cache(module='sets', expire=60)
 def get_profitable_sets(x):
     pipeline = [
         {
@@ -188,6 +190,7 @@ def get_profitable_sets(x):
     return top_sets
 
 @sets_api.route('/popular/<x>')
+@redis_cache(module='sets', expire=60)
 def get_popular_sets(x):
     all_sets = REDIS.smembers("all_sets")
     popular_sets = []
@@ -201,11 +204,13 @@ def get_popular_sets(x):
     return jsonify(result)
 
 @sets_api.route('/cheapest/new/<x>')
+@redis_cache(module='sets', expire=60)
 def get_cheapest_new_sets(x):
     result = SET_OVERVIEWS_COLLECTION.find({"price": {"$ne": None}}).sort("price", 1).limit(int(x))
     return jsonify(list(result))
 
 @sets_api.route('/cheapest/used/<x>')
+@redis_cache(module='sets', expire=60)
 def get_cheapest_used_sets(x):
     pipeline = [
         {

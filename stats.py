@@ -10,7 +10,6 @@ SET_OVERVIEWS_COLLECTION = DB['set_overviews']
 SET_CONTENTS_COLLECTION = DB['set_contents']
 SET_SIMILARITIES_COLLECTION = DB['set_similarities']
 SET_OFFERS_COLLECTION = DB['set_offers']
-COLORS_COLLECTION = DB['colors']
 
 #collor maping 
 def get_color_name_map():

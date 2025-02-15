@@ -80,7 +80,6 @@ def get_users(current_user):
     if not current_user.get('is_admin', False):
         return jsonify({'message': 'Unauthorized access'}), 403
     
-
     result = list(USERS_COLLECTION.find())
     for user in result:
         user['_id'] = str(user['_id'])
@@ -119,7 +118,8 @@ def get_user(current_user,id):
     # chacking that curent user is the same as the user requested
     if current_user['_id'] != id and not current_user.get('is_admin', False):
         return jsonify({'message': 'Unauthorized access'}), 403
-    result = list(USERS_COLLECTION.find({"_id": id}))
+
+      result = list(USERS_COLLECTION.find({"_id": id}))
     if not result:
         return jsonify({'error': 'User not found'}), 404
     return jsonify(result)
@@ -318,7 +318,11 @@ def most_expensive_part(current_user, id):
     # chacking that curent user is the same as the user requested
     if current_user['_id'] != id and not current_user.get('is_admin', False):
         return jsonify({'message': 'Unauthorized access'}), 403
-    
+      
+    user = USERS_COLLECTION.find_one({"_id": id})
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+
     most_expensive_part = None
     max_price = 0
 
@@ -385,7 +389,6 @@ def total_value_of_owned_parts(current_user,id):
 @users_api.route('/<id>/inventory/completed/<top_count>', methods=['GET'])
 @token_required
 def set_completed_percentage(id, top_count, current_user):
-
     top_count = int(top_count)
     # chacking that curent user is the same as the user requested
     if current_user['_id'] != id and not current_user.get('is_admin', False):
