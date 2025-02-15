@@ -16,8 +16,8 @@ def get_sets():
         result = list(SET_OVERVIEWS_COLLECTION.find().limit(int(limit)))
         for set in result:
             set['_id'] = str(set['_id'])    
-        return jsonify(result)
-    return sub_get_sets(), 200
+        return jsonify(result), 200
+    return sub_get_sets()
 
 @sets_api.route('/<id>')
 @redis_cache(module='sets', expire=600)
@@ -187,7 +187,7 @@ def get_profitable_sets(x):
     ]
         
     top_sets = list(SET_OVERVIEWS_COLLECTION.aggregate(pipeline))
-    return top_sets, 200
+    return jsonify(top_sets), 200
 
 @sets_api.route('/popular/<x>')
 @redis_cache(module='sets', expire=60)
@@ -231,4 +231,4 @@ def get_cheapest_used_sets(x):
     ]
 
     top_sets = list(SET_OVERVIEWS_COLLECTION.aggregate(pipeline))
-    return top_sets, 200
+    return jsonify(top_sets), 200
