@@ -17,7 +17,7 @@ def get_sets():
         for set in result:
             set['_id'] = str(set['_id'])    
         return jsonify(result)
-    return sub_get_sets()
+    return sub_get_sets(), 200
 
 @sets_api.route('/<id>')
 @redis_cache(module='sets', expire=600)
@@ -35,7 +35,7 @@ def get_set(id):
     
     # if result:
     #     REDIS.hincrby(f"set:{id}", "visit_count", 1)
-    return jsonify(result)
+    return jsonify(result), 200
 
 @sets_api.route('/<id>/offers', methods=['PUT', 'POST'])
 def update_set_offers(id):
@@ -122,7 +122,7 @@ def create_set():
                 del data['parts']
                 result = SET_OVERVIEWS_COLLECTION.insert_one(data, session=session)
                 session.commit_transaction()
-                return jsonify({'inserted_id': str(result.inserted_id)}), 201
+                return jsonify({'inserted_id': str(result.inserted_id)}), 200
     except DuplicateKeyError as e:
         return jsonify({'error': f"Duplicate key error: {str(e)}"}), 409
     except Exception as e:
@@ -143,7 +143,7 @@ def delete_set(id):
                 SET_CONTENTS_COLLECTION.delete_one({"_id": id}, session=session)
                 
                 session.commit_transaction()
-                return jsonify({'deleted_count': result.deleted_count})
+                return jsonify({'deleted_count': result.deleted_count}), 200
     except Exception as e:
         return jsonify({'error': 'An unexpected error occurred.', 'details': str(e)}), 500
 
@@ -187,7 +187,7 @@ def get_profitable_sets(x):
     ]
         
     top_sets = list(SET_OVERVIEWS_COLLECTION.aggregate(pipeline))
-    return top_sets
+    return top_sets, 200
 
 @sets_api.route('/popular/<x>')
 @redis_cache(module='sets', expire=60)
@@ -201,13 +201,13 @@ def get_popular_sets(x):
     result = []
     for s in popular_sets:
         result.append(SET_OVERVIEWS_COLLECTION.find_one({"_id": s["_id"]}))
-    return jsonify(result)
+    return jsonify(result), 200
 
 @sets_api.route('/cheapest/new/<x>')
 @redis_cache(module='sets', expire=60)
 def get_cheapest_new_sets(x):
     result = SET_OVERVIEWS_COLLECTION.find({"price": {"$ne": None}}).sort("price", 1).limit(int(x))
-    return jsonify(list(result))
+    return jsonify(list(result)), 200
 
 @sets_api.route('/cheapest/used/<x>')
 @redis_cache(module='sets', expire=60)
@@ -231,4 +231,4 @@ def get_cheapest_used_sets(x):
     ]
 
     top_sets = list(SET_OVERVIEWS_COLLECTION.aggregate(pipeline))
-    return top_sets
+    return top_sets, 200
