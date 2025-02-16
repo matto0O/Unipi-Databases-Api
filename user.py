@@ -1,4 +1,8 @@
 from imports import *
+import jwt
+import datetime
+from flask import current_app, jsonify, request
+from functools import wraps
 
 users_api = Blueprint('users_api', __name__)
 USERS_COLLECTION = DB['users']
@@ -7,11 +11,74 @@ SET_OVERVIEWS_COLLECTION = DB['set_overviews']
 SET_CONTENTS_COLLECTION = DB['set_contents']
 SET_SIMILARITIES_COLLECTION = DB['set_similarities']
 SET_OFFERS_COLLECTION = DB['set_offers']
-COLORS_COLLECTION = DB['colors']
+
+# Making a token to authenticate users
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = request.headers.get('Authorization')
+        if not token:
+            return jsonify({'message': 'No token!'}), 401
+        try:
+            token = token.replace('Bearer ', '')  # Remove 'Bearer ' prefix from token
+            data = jwt.decode(token, current_app.config['SECRET_KEY'], algorithms=['HS256'])
+            current_user = USERS_COLLECTION.find_one({'_id': data.get('_id')})
+            if not current_user:
+                return jsonify({'message': 'Invalid token!'}), 401
+        except jwt.ExpiredSignatureError:
+            return jsonify({'message': 'Token has expired'}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({'message': 'Invalid token!'}), 401
+        except Exception as e:
+            return jsonify({'message': 'Authorization error', 'error': str(e)}), 401
+        
+        # If user is an admin, give access to everything
+        if current_user.get('is_admin', False):
+            return f(current_user, *args, **kwargs)
+
+        # Otherwise, check if the user is trying to access their own data
+        requested_user_id = kwargs.get('id')
+        if current_user['_id'] != requested_user_id:
+            return jsonify({'message': 'Unauthorized access'}), 403
+
+        return f(current_user, *args, **kwargs)
+    return decorated
+
+# login
+@users_api.route('/login', methods=['POST'])
+def login():
+    data = request.json
+    print(f"Attempting login for username: {data.get('username')}")
+    
+    # Find the user in the database by username
+    user = USERS_COLLECTION.find_one({'_id': data.get('username')})
+    
+    if user:
+        print(f"Found user: {user}")
+        # Check if the provided password matches the stored password
+        if user['password'] == data.get('password'):
+            # Generate a JWT token with user ID and expiration time
+            token = jwt.encode(
+                {'_id': user['_id'], 'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=1)}, 
+                current_app.config['SECRET_KEY'], 
+                algorithm='HS256'
+            )
+            return jsonify({'token': token})
+        else:
+            print("Incorrect password")
+            return jsonify({'message': 'Invalid login credentials'}), 401
+    else:
+        print("User not found")
+        return jsonify({'message': 'Invalid login credentials'}), 401
+
 
 @users_api.route('')
-@redis_cache(module='colors', expire=1)
-def get_users():
+@token_required
+def get_users(current_user):    
+    # chacking that curent user is the same as the user requested
+    if not current_user.get('is_admin', False):
+        return jsonify({'message': 'Unauthorized access'}), 403
+    
     result = list(USERS_COLLECTION.find())
     for user in result:
         user['_id'] = str(user['_id'])
@@ -40,69 +107,93 @@ def create_user():
         result = USERS_COLLECTION.insert_one(data)
         return jsonify({'inserted_id': str(result.inserted_id)}), 201
     except DuplicateKeyError:
-        return jsonify({'error': f"Part with _id '{data['_id']}' already exists."}), 409
+        return jsonify({'error': f"User with _id '{data['_id']}' already exists."}), 409
     except Exception as e:
         return jsonify({'error': 'An unexpected error occurred.', 'details': str(e)}), 500
 
 @users_api.route('/<id>')
-@redis_cache(module='colors', expire=1)
-def get_user(id):
+@token_required
+def get_user(current_user,id):
+    # chacking that curent user is the same as the user requested
+    if current_user['_id'] != id and not current_user.get('is_admin', False):
+        return jsonify({'message': 'Unauthorized access'}), 403
+
     result = list(USERS_COLLECTION.find({"_id": id}))
     if not result:
         return jsonify({'error': 'User not found'}), 404
     return jsonify(result)
 
-@users_api.route('/<id>/inventory')
-@redis_cache(module='colors', expire=1)
-def get_user_inventory(id):
+@users_api.route('/<id>/inventory', methods=['GET'])
+@token_required
+def get_user_inventory(current_user, id):
+    # chacking that curent user is the same as the user requested
+    if current_user['_id'] != id and not current_user.get('is_admin', False):
+        return jsonify({'message': 'Unauthorized access'}), 403
+
+    # looking inventory by 'id'
     user = USERS_COLLECTION.find_one({"_id": id})
     if not user:
-        return None
-    return user['inventory']
+        return jsonify({'message': 'User not found'}), 404
 
-@users_api.route('/<id>/inventory', methods=['POST'])
-def add_items_to_inventory(id):
+    # returning inventory
+    return jsonify(user['inventory']), 200
+
+
+@users_api.route('/<id>/inventory', methods=['POST, PUT'])
+@token_required
+def add_items_to_inventory(current_user,id):
     data = request.json
+    # chacking that curent user is the same as the user requested
+    if current_user['_id'] != id and not current_user.get('is_admin', False):
+        return jsonify({'message': 'Unauthorized access'}), 403
 
     if not data or not isinstance(data, dict):
         return jsonify({'error': 'Invalid input. JSON body is required.'}), 400
-
-    if 'parts' not in data or 'sets' not in data:
-        return jsonify({'error': 'Both "parts" and "sets" are required in the input.'}), 400
-
-    if 'parts' in data:
-        if not isinstance(data['parts'], dict):
-            return jsonify({'error': "'parts' must be a dictionary with part IDs as keys and colors with quantities as values."}), 400
-        for part_id, colors in data['parts'].items():
-            if not isinstance(colors, dict):
-                return jsonify({'error': f"Part {part_id} colors should be a dictionary."}), 400
-            for color, quantity in colors.items():
-                if not isinstance(quantity, int):
-                    return jsonify({'error': f"Invalid quantity for part {part_id}, color {color}. Must be an integer."}), 400
-
-    if 'sets' in data:
-        if not isinstance(data['sets'], dict):
-            return jsonify({'error': "'sets' must be a dictionary with set IDs as keys and quantities as values."}), 400
-        for set_id, quantity in data['sets'].items():
-            if not isinstance(quantity, int):
-                return jsonify({'error': f"Invalid quantity for set {set_id}. Must be an integer."}), 400
 
     user = USERS_COLLECTION.find_one({"_id": id})
     if not user:
         return jsonify({'error': 'User not found'}), 404
 
-    for part_id, colors in data.get('parts', {}).items():
-        if part_id not in user['inventory']['parts']:
-            user['inventory']['parts'][part_id] = {}
-        for color, quantity in colors.items():
-            if color not in user['inventory']['parts'][part_id]:
-                user['inventory']['parts'][part_id][color] = 0
-            user['inventory']['parts'][part_id][color] += quantity
+    if 'parts' not in data and 'sets' not in data:
+        return jsonify({'error': 'Either "parts" and "sets" are required in the input.'}), 400
 
-    for set_id, quantity in data.get('sets', {}).items():
-        if set_id not in user['inventory']['sets']:
-            user['inventory']['sets'][set_id] = 0
-        user['inventory']['sets'][set_id] += quantity
+    if 'parts' in data:
+        if not isinstance(data['parts'], list):
+            return jsonify({'error': "'parts' must be a list of (_id, color, quantity) objects."}), 400
+        for object_ in data['parts']:
+            if not isinstance(object_, dict) or ["_id", "color", "quantity"] not in object_:
+                return jsonify({'error': f"Part should be a (_id, color, quantity) object."}), 400
+            if not isinstance(object_["quantity"], int):
+                return jsonify({'error': f"Invalid quantity for part {object_["_id"]}, color {object_["color"]}. Must be an integer."}), 400
+
+    if 'sets' in data:
+        if not isinstance(data['sets'], list):
+            return jsonify({'error': "'sets' must be a list of (_id, quantity) objects."}), 400
+        for object_ in data['sets']:
+            if not isinstance(object_, dict) or ["_id", "quantity"] not in object_:
+                return jsonify({'error': f"Set should be a (_id, quantity) object."}), 400
+            if not isinstance(object_["quantity"], int):
+                return jsonify({'error': f"Invalid quantity for set {object_["_id"]}. Must be an integer."}), 400
+
+    for part_obj in data.get('parts', []):
+        added = False
+        for existing_part in user['inventory']['parts']:
+            if existing_part['_id'] == part_obj['_id'] and existing_part['color'] == part_obj['color']:
+                existing_part['quantity'] += part_obj['quantity']
+                added = True
+                break
+        if not added:
+            user['inventory']['parts'].append(part_obj)
+
+    for set_obj in data.get('sets', []):
+        added = False
+        for existing_set in user['inventory']['sets']:
+            if existing_set['_id'] == set_obj['_id']:
+                existing_set['quantity'] += set_obj['quantity']
+                added = True
+                break
+        if not added:
+            user['inventory']['parts'].append(part_obj)
 
     result = USERS_COLLECTION.update_one({"_id": id}, {"$set": user})
 
@@ -112,21 +203,29 @@ def add_items_to_inventory(id):
     return jsonify(user['inventory'])
 
 @users_api.route('/<id>/inventory', methods=['DELETE'])
-def remove_items_from_inventory(id):
+@token_required
+def remove_items_from_inventory(current_user,id):
     data = request.json
-
-    if not data or not isinstance(data, dict):
-        return jsonify({'error': 'Invalid input. JSON body is required.'}), 400
-
-    if 'parts' in data and not isinstance(data['parts'], dict):
-        return jsonify({'error': "'parts' must be a dictionary with part IDs as keys, colors and quantities as values."}), 400
-
-    if 'sets' in data and not isinstance(data['sets'], dict):
-        return jsonify({'error': "'sets' must be a dictionary with set IDs as keys and quantities as values."}), 400
+    # chacking that curent user is the same as the user requested
+    if current_user['_id'] != id and not current_user.get('is_admin', False):
+        return jsonify({'message': 'Unauthorized access'}), 403
     
     user = USERS_COLLECTION.find_one({"_id": id})
     if not user:
         return jsonify({'error': 'User not found'}), 404
+    
+    if not data or not isinstance(data, dict):
+        return jsonify({'error': 'Invalid input. JSON body is required.'}), 400
+
+    if 'parts' not in data and 'sets' not in data:
+        return jsonify({'error': 'Either "parts" and "sets" are required in the input.'}), 400
+
+    if 'parts' in data and not isinstance(data['parts'], list):
+        return jsonify({'error': "'parts' must be a list of (_id, color) objects."}), 400
+
+    if 'sets' in data and not isinstance(data['sets'], list):
+        return jsonify({'error': "'sets' must be a list of _id."}), 400
+
     
     for part_id, quantity in data.get('parts', {}).items():
         if part_id not in user['inventory']['parts']:
@@ -135,17 +234,39 @@ def remove_items_from_inventory(id):
         if user['inventory']['parts'][part_id] <= 0:
             del user['inventory']['parts'][part_id]
 
-    for set_id, quantity in data.get('sets', {}).items():
-        if set_id not in user['inventory']['sets']:
-            return jsonify({'error': f"Set with ID '{set_id}' not found in user's inventory."}), 404
-        user['inventory']['sets'][set_id] -= quantity
-        if user['inventory']['sets'][set_id] <= 0:
-            del user['inventory']['sets'][set_id]
+    removed_parts = 0
+    for part_obj in data.get('parts', []):
+        for existing_part in user['inventory']['parts']:
+            if existing_part['_id'] == part_obj['_id'] and existing_part['color'] == part_obj['color']:
+                del existing_part
+                removed_parts += 1
+                break
+
+    removed_sets = 0
+    for set_obj in data.get('sets', []):
+        for existing_set in user['inventory']['sets']:
+            if existing_set['_id'] == set_obj['_id']:
+                del existing_set
+                removed_sets += 1
+                break
+
+    USERS_COLLECTION.update_one({"_id": id}, {"$set": user})
+    return jsonify(
+        {
+            "removed_parts" : removed_parts,
+            "removed_sets": removed_sets
+        }), 200
+
 
 #  the rest of the crud operations for users
 @users_api.route('/<id>', methods=['PUT'])
-def update_user(id):
+@token_required
+def update_user(current_user,id):
     data = request.json
+    # chacking that curent user is the same as the user requested
+    if current_user['_id'] != id and not current_user.get('is_admin', False):
+        return jsonify({'message': 'Unauthorized access'}), 403
+    
     if not data or not isinstance(data, dict):
         return jsonify({'error': 'Invalid input. JSON body is required.'}), 400
     
@@ -154,10 +275,18 @@ def update_user(id):
         return jsonify({'error': 'User not found'}), 404
     
     update_fields = {}
+    
     if 'password' in data:
+        if not isinstance(data['password'], str):
+            return jsonify({'error': 'Invalid password format. Must be a string.'}), 400
         update_fields['password'] = data['password']
+    
     if 'is_admin' in data:
+        if not isinstance(data['is_admin'], bool):
+            return jsonify({'error': 'Invalid is_admin format. Must be a boolean.'}), 400
         update_fields['is_admin'] = data['is_admin']
+
+    update_fields["inventory"] = user.get("inventory", {"sets": {}, "parts": {}})
     
     if update_fields:
         result = USERS_COLLECTION.update_one({"_id": id}, {"$set": update_fields})
@@ -167,12 +296,14 @@ def update_user(id):
     else:
         return jsonify({'error': 'No valid fields to update'}), 400
 
+
 # Delete User (DELETE /users/<id>)
 @users_api.route('/<id>', methods=['DELETE'])
-def delete_user(id):
-    user = USERS_COLLECTION.find_one({"_id": id})
-    if not user:
-        return jsonify({'error': 'User not found'}), 404
+@token_required
+def delete_user(current_user,id):
+    # chacking that curent user is the same as the user requested
+    if current_user['_id'] != id and not current_user.get('is_admin', False):
+        return jsonify({'message': 'Unauthorized access'}), 403
 
     USERS_COLLECTION.delete_one({"_id": id})
     return jsonify({'message': f'User {id} deleted successfully'}), 200
@@ -180,79 +311,66 @@ def delete_user(id):
 
 #  most expensive owned part (include parts contained in sets)
 @users_api.route('/<id>/inventory/most_expensive_part')
-@redis_cache(module='colors')
-def most_expensive_part(id):
+@token_required
+def most_expensive_part(current_user, id):
+    # chacking that curent user is the same as the user requested
+    if current_user['_id'] != id and not current_user.get('is_admin', False):
+        return jsonify({'message': 'Unauthorized access'}), 403
+      
     user = USERS_COLLECTION.find_one({"_id": id})
     if not user:
         return jsonify({'error': 'User not found'}), 404
-    
 
-    most_expensive_part = None
+    most_expensive_part_ = None
     max_price = 0
 
     if 'inventory' in user and 'parts' in user['inventory']:
-        for part_id, colors in user['inventory']['parts'].items():
+        for part_obj in user['inventory']['parts']:
             # Find the part in PARTS_COLLECTION
+            part_id = part_obj['_id']
+            color = part_obj['color']
             part = PARTS_COLLECTION.find_one({"_id": part_id})
-            if part:
-                # Part exists, check the prices of its colors
-                for color, quantity in colors.items():
-                    # Check if there are colors and prices in this part
-                    if 'colors' in part and isinstance(part['colors'], dict):
-                        color_entries = part['colors'].get(color, [])
-                        for entry in color_entries:
-                            if isinstance(entry, dict) and 'Price' in entry:
-                                price = entry['Price']  # Price of this color
-                                total_price = price * quantity 
-                                if total_price > max_price:
-                                    max_price = total_price
-                                    most_expensive_part = part_id
+            if part and part["colors"][color][0]["price"] > max_price:
+                max_price = part["colors"][color][0]["price"]
+                most_expensive_part_ = {
+                    "_id":part_id,
+                    "color": color
+                }
 
-    if most_expensive_part:
-        return jsonify({'most_expensive_part': most_expensive_part, 'price': max_price})
+    if most_expensive_part_:
+        return jsonify({'most_expensive_part': most_expensive_part_, 'price': max_price}), 200
     else:
         return jsonify({'error': 'No parts found in inventory.'}), 404
 
 @users_api.route('/<id>/inventory/total_value')
-@redis_cache(module='colors', expire=60)
-def total_value_of_owned_parts(id):
+@token_required
+def total_value_of_owned_parts(current_user,id):
     user = USERS_COLLECTION.find_one({"_id": id})
-    if not user:
-        return jsonify({'error': 'User not found'}), 404
+    # chacking that curent user is the same as the user requested
+    if current_user['_id'] != id and not current_user.get('is_admin', False):
+        return jsonify({'message': 'Unauthorized access'}), 403
 
     total_value = 0
     # Check parts in user's inventory
     if 'inventory' in user and 'parts' in user['inventory']:
-        for part_id, colors in user['inventory']['parts'].items():
+        for part_obj in user['inventory']['parts']:
             # Find the part in PARTS_COLLECTION
+            part_id = part_obj['_id']
+            color = part_obj['color']
             part = PARTS_COLLECTION.find_one({"_id": part_id})
             if part:
-                # Part exists, check the prices of its colors
-                for color, quantity in colors.items():
-                    # Check if there are colors and prices in this part
-                    if 'colors' in part and isinstance(part['colors'], dict):
-                        color_entries = part['colors'].get(color, [])
-                        
-                        # If we have prices for this color, find the highest price
-                        if color_entries:
-                            max_price = 0
-                            for entry in color_entries:
-                                if isinstance(entry, dict) and 'Price' in entry:
-                                    price = entry['Price']
-                                    if price > max_price:
-                                        max_price = price  # Choose the highest price for this color
-
-                            if max_price > 0:  # If we have a price for this color
-                                total_price = max_price * quantity  # Total price = price * quantity
-                                total_value += total_price  # Sum the values of all parts
+                total_value += part["colors"][color][0]["price"] * part_obj['quantity']
 
     # Return the total value of owned parts
     return jsonify({'total_value': round(total_value, 2)})
 
 @users_api.route('/<id>/inventory/completed/<top_count>', methods=['GET'])
-@redis_cache(module='colors', expire=60)
-def set_completed_percentage(id, top_count):
+@token_required
+def set_completed_percentage(id, top_count, current_user):
     top_count = int(top_count)
+    # chacking that curent user is the same as the user requested
+    if current_user['_id'] != id and not current_user.get('is_admin', False):
+        return jsonify({'message': 'Unauthorized access'}), 403
 
     user = USERS_COLLECTION.find_one({"_id": id})
 
@@ -262,7 +380,8 @@ def set_completed_percentage(id, top_count):
     user_inventory = user['inventory']
     result = []
 
-    for set_id, _ in user_inventory['sets'].items():
+    for set_obj in user_inventory['sets']:
+        set_id = set_obj['_id']
         pipeline = [
             {
                 '$match': {
@@ -325,10 +444,10 @@ def _get_all_parts(uid):
     user = USERS_COLLECTION.find_one({"_id": uid})
     if user is None:
         raise KeyError(uid)
+    
     all_parts = {}
-    for part_id, colors in user['inventory']['parts'].items():
-        for color, quantity in colors.items():
-            all_parts[(part_id, color)] = quantity
+    for elem in user['inventory']['parts']:
+        all_parts[(elem['_id'], elem['color'])] = elem['quantity']
 
     for brickset in user['inventory']['sets']:
         for part_id, val in SET_CONTENTS_COLLECTION.find_one({"_id": brickset})["parts"].items():
@@ -341,10 +460,11 @@ def _get_all_parts(uid):
 
 #This function compute the cheapest set that the user can complete
 @users_api.route('/<id>/inventory/cheapest_set', methods=['GET'])
-def find_cheapest_from_inventory(id):
-    user = USERS_COLLECTION.find_one({"_id": id})
-    if not user:
-        return jsonify({'error': 'User not found'}), 404
+@token_required
+def find_cheapest_from_inventory(current_user,id):
+    # chacking that curent user is the same as the user requested
+    if current_user['_id'] != id and not current_user.get('is_admin', False):
+        return jsonify({'message': 'Unauthorized access'}), 403
   
     user_parts = _get_all_parts(id)
     completed_percentages = []
@@ -385,7 +505,6 @@ def find_cheapest_from_inventory(id):
         set_overview = SET_OVERVIEWS_COLLECTION.find_one({"_id": set_id})
         if set_overview and "min_offer" in set_overview:
             if set_overview["min_offer"] < min_price:
-                min_offer = set_overview["min_offer"]
                 cheapest_set = {
                     "set_id": set_id,
                     "name": set_overview["name"],
