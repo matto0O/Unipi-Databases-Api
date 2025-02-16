@@ -80,39 +80,142 @@ def get_part_statistics():
 
     # Distribution of colors among parts
     color_counts = PARTS_COLLECTION.aggregate([
-        {"$project": {"colors": {"$objectToArray": "$colors"}}},
-        {"$unwind": "$colors"},
-        {"$group": {"_id": "$colors.k", "count": {"$sum": {"$size": "$colors.v"}}}}
+    {
+        "$project": {
+            "colors": {
+                "$cond": {
+                    "if": {"$isArray": "$colors"},  # Check if colors is an array
+                    "then": "$colors",  # If it's already an array, keep it as is
+                    "else": {"$objectToArray": "$colors"}  # If it's an object, convert it to an array
+                }
+            }
+        }
+    },
+    {"$unwind": "$colors"},  # Unwind the array of colors
+    {"$unwind": "$colors.v"},  # Unwind the array of offers for each color
+    {"$group": {"_id": "$colors.k", "count": {"$sum": 1}}}  # Count number of offers for each color
     ])
+
     colors_distribution = {doc["_id"]: doc["count"] for doc in color_counts}
 
     # Part with the most offers
     part_with_most_offers = next(PARTS_COLLECTION.aggregate([
-        {"$project": {"_id": 1, "num_offers": {"$sum": [{"$size": {"$ifNull": [{"$objectToArray": "$colors"}, []]}}]}}},
-        {"$sort": {"num_offers": -1}},
-        {"$limit": 1}
-    ]), None)
+    {
+        "$project": {
+            "_id": 1,
+            "num_offers": {
+                "$cond": [
+                    {"$eq": [{"$type": "$colors"}, "object"]},
+                    {
+                        "$sum": {
+                            "$map": {
+                                "input": { "$objectToArray": "$colors" },
+                                "as": "color",
+                                "in": { "$size": "$$color.v" }
+                            }
+                        }
+                    },
+                    {"$cond": [
+                        {"$eq": [{"$type": "$colors"}, "array"]},
+                        { "$size": "$colors" },
+                        0
+                    ]}
+                ]
+            }
+        }
+    },
+    {"$sort": {"num_offers": -1}},
+    {"$limit": 1}
+]), None)
 
     # Part with the least offers
     part_with_less_offers = next(PARTS_COLLECTION.aggregate([
-        {"$project": {"_id": 1, "num_offers": {"$sum": [{"$size": {"$ifNull": [{"$objectToArray": "$colors"}, []]}}]}}},
-        {"$sort": {"num_offers": 1}},
-        {"$limit": 1}
-    ]), None)
+    {
+        "$project": {
+            "_id": 1,
+            "num_offers": {
+                "$cond": [
+                    {"$eq": [{"$type": "$colors"}, "object"]},
+                    {
+                        "$sum": {
+                            "$map": {
+                                "input": { "$objectToArray": "$colors" },
+                                "as": "color",
+                                "in": { "$size": "$$color.v" }
+                            }
+                        }
+                    },
+                    {"$cond": [
+                        {"$eq": [{"$type": "$colors"}, "array"]},
+                        { "$size": "$colors" },
+                        0
+                    ]}
+                ]
+            }
+        }
+    },
+    {"$sort": {"num_offers": 1}},
+    {"$limit": 1}
+]), None)
+
 
     # Cheapest part based on offers
     cheapest_part = next(PARTS_COLLECTION.aggregate([
-        {"$project": {"_id": 1, "min_price": {"$min": {"$map": {"input": {"$objectToArray": "$colors"}, "as": "color", "in": {"$min": {"$map": {"input": "$$color.v", "as": "offer", "in": "$$offer.Price"}}}}}}}},
-        {"$sort": {"min_price": 1}},
-        {"$limit": 1}
-    ]), None)
+    {
+        "$project": {
+            "_id": 1,
+            "min_price": {
+                "$min": {
+                    "$map": {
+                        "input": { "$objectToArray": "$colors" }, 
+                        "as": "color",
+                        "in": {
+                            "$min": {
+                                "$map": {
+                                    "input": "$$color.v",  
+                                    "as": "offer",
+                                    "in": "$$offer.Price"   
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    {"$sort": {"min_price": 1}},
+    {"$limit": 1}
+]), None)
+
 
     # Most expensive part based on offers
     most_expensive_part = next(PARTS_COLLECTION.aggregate([
-        {"$project": {"_id": 1, "max_price": {"$max": {"$map": {"input": {"$objectToArray": "$colors"}, "as": "color", "in": {"$max": {"$map": {"input": "$$color.v", "as": "offer", "in": "$$offer.Price"}}}}}}}},
-        {"$sort": {"max_price": -1}},
-        {"$limit": 1}
-    ]), None)
+    {
+        "$project": {
+            "_id": 1,
+            "max_price": {
+                "$max": {
+                    "$map": {
+                        "input": { "$objectToArray": "$colors" },  
+                        "as": "color",
+                        "in": {
+                            "$max": {
+                                "$map": {
+                                    "input": "$$color.v",  
+                                    "as": "offer",
+                                    "in": "$$offer.Price"  
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    {"$sort": {"max_price": -1}},  
+    {"$limit": 1}  
+]), None)
+
 
     statistics['parts'] = {
         "total_parts": total_parts,
@@ -128,93 +231,160 @@ def get_part_statistics():
 def get_user_statistics():
     statistics = {}
 
-    # Total number of users
+    #  Total number of users
     total_users = USERS_COLLECTION.count_documents({})
-    # Number of users with sets in their inventory
-    users_with_sets = USERS_COLLECTION.count_documents({"inventory.sets": {"$exists": True, "$ne": []}})
-    # Number of users with parts in their inventory
-    users_with_parts = USERS_COLLECTION.count_documents({"inventory.parts": {"$exists": True, "$ne": []}})
 
-    # User with the most parts
+    #  Number of users with sets
+    users_with_sets = USERS_COLLECTION.count_documents({
+        "inventory.sets": {"$exists": True, "$ne": []}
+    })
+
+    # Number of users with parts
+    users_with_parts = USERS_COLLECTION.count_documents({
+        "inventory.parts": {"$exists": True, "$ne": []}
+    })
+
+   #  User with the most parts
     user_with_most_parts = next(USERS_COLLECTION.aggregate([
-        {"$project": {"parts": {"$objectToArray": "$inventory.parts"}}},
-        {"$unwind": "$parts"},
-        {"$project": {"part_values": {"$objectToArray": "$parts.v"}}},
-        {"$unwind": "$part_values"},
-        {"$group": {"_id": "$_id", "num_parts": {"$sum": {"$toInt": "$part_values.v"}}}},
-        {"$sort": {"num_parts": -1}},
-        {"$limit": 1}
-    ]), None)
+    {"$project": {
+        "_id": 1,
+        "total_parts": {
+            "$sum": {
+                "$map": {
+                    "input": {
+                        "$cond": {
+                            "if": {"$isArray": "$inventory.parts"},
+                            "then": "$inventory.parts",
+                            "else": {"$objectToArray": "$inventory.parts"}
+                        }
+                    },
+                    "as": "part",
+                    "in": {"$toInt": "$$part.v.quantity"}
+                }
+            }
+        }
+    }},
+    {"$sort": {"total_parts": -1}},
+    {"$limit": 1}
+]), None)
 
-    # User with the least parts
+#  User with the least parts
     user_with_less_parts = next(USERS_COLLECTION.aggregate([
-        {"$project": {"parts": {"$objectToArray": "$inventory.parts"}}},
-        {"$unwind": "$parts"},
-        {"$project": {"part_values": {"$objectToArray": "$parts.v"}}},
-        {"$unwind": "$part_values"},
-        {"$group": {"_id": "$_id", "num_parts": {"$sum": {"$toInt": "$part_values.v"}}}},
-        {"$sort": {"num_parts": 1}},
-        {"$limit": 1}
-    ]), None)
+    {"$project": {
+        "_id": 1,
+        "total_parts": {
+            "$sum": {
+                "$map": {
+                    "input": {
+                        "$cond": {
+                            "if": {"$isArray": "$inventory.parts"},
+                            "then": "$inventory.parts",
+                            "else": {"$objectToArray": "$inventory.parts"}
+                        }
+                    },
+                    "as": "part",
+                    "in": {"$toInt": "$$part.v.quantity"}
+                }
+            }
+        }
+    }},
+    {"$sort": {"total_parts": 1}},
+    {"$limit": 1}
+]), None)
 
-    # User with the most sets
+# User with the most sets
     user_with_most_sets = next(USERS_COLLECTION.aggregate([
-        {"$project": {"sets": {"$objectToArray": "$inventory.sets"}}},
-        {"$unwind": "$sets"},
-        {"$project": {"set_id": "$sets.k"}},
-        {"$group": {"_id": "$_id", "unique_sets": {"$addToSet": "$set_id"}}},
-        {"$project": {"_id": 1, "num_sets": {"$size": "$unique_sets"}}},
-        {"$sort": {"num_sets": -1}},
-        {"$limit": 1}
-    ]), None)
+    {"$project": {
+        "_id": 1,
+        "total_sets": {
+            "$sum": {
+                "$map": {
+                    "input": {
+                        "$cond": {
+                            "if": {"$isArray": "$inventory.sets"},
+                            "then": "$inventory.sets",
+                            "else": {"$objectToArray": "$inventory.sets"}
+                        }
+                    },
+                    "as": "set",
+                    "in": {"$toInt": "$$set.v.quantity"}
+                }
+            }
+        }
+    }},
+    {"$sort": {"total_sets": -1}},
+    {"$limit": 1}
+]), None)
 
     # User with the least sets
     user_with_less_sets = next(USERS_COLLECTION.aggregate([
-        {"$project": {"sets": {"$objectToArray": "$inventory.sets"}}},
-        {"$unwind": "$sets"},
-        {"$project": {"set_id": "$sets.k"}},
-        {"$group": {"_id": "$_id", "unique_sets": {"$addToSet": "$set_id"}}},
-        {"$project": {"_id": 1, "num_sets": {"$size": "$unique_sets"}}},
-        {"$sort": {"num_sets": 1}},
-        {"$limit": 1}
-    ]), None)
+    {"$project": {
+        "_id": 1,
+        "total_sets": {
+            "$sum": {
+                "$map": {
+                    "input": {
+                        "$cond": {
+                            "if": {"$isArray": "$inventory.sets"},
+                            "then": "$inventory.sets",
+                            "else": {"$objectToArray": "$inventory.sets"}
+                        }
+                    },
+                    "as": "set",
+                    "in": {"$toInt": "$$set.v.quantity"}
+                }
+            }
+        }
+    }},
+    {"$sort": {"total_sets": 1}},
+    {"$limit": 1}
+]), None)
 
-    # Most frequent part in users' inventories
+    #  Most frequent part in users' inventories
     most_frequent_part = next(USERS_COLLECTION.aggregate([
-        {"$project": {"parts": {"$objectToArray": "$inventory.parts"}}},
-        {"$unwind": "$parts"},
-        {"$group": {"_id": "$parts.k", "count": {"$sum": 1}}},
+        {"$unwind": "$inventory.parts"},
+        {"$group": {
+            "_id": "$inventory.parts._id",
+            "count": {"$sum": "$inventory.parts.quantity"}
+        }},
         {"$sort": {"count": -1}},
         {"$limit": 1}
     ]), None)
 
-    # Least frequent part in users' inventories
+    #  Least frequent part in users' inventories
     less_frequent_part = next(USERS_COLLECTION.aggregate([
-        {"$project": {"parts": {"$objectToArray": "$inventory.parts"}}},
-        {"$unwind": "$parts"},
-        {"$group": {"_id": "$parts.k", "count": {"$sum": 1}}},
+        {"$unwind": "$inventory.parts"},
+        {"$group": {
+            "_id": "$inventory.parts._id",
+            "count": {"$sum": "$inventory.parts.quantity"}
+        }},
         {"$sort": {"count": 1}},
         {"$limit": 1}
     ]), None)
 
-    # Most frequent set in users' inventories
+    #  Most frequent set in users' inventories
     most_frequent_set = next(USERS_COLLECTION.aggregate([
-        {"$project": {"sets": {"$objectToArray": "$inventory.sets"}}},
-        {"$unwind": "$sets"},
-        {"$group": {"_id": "$sets.k", "count": {"$sum": 1}}},
+        {"$unwind": "$inventory.sets"},
+        {"$group": {
+            "_id": "$inventory.sets._id",
+            "count": {"$sum": "$inventory.sets.quantity"}
+        }},
         {"$sort": {"count": -1}},
         {"$limit": 1}
     ]), None)
 
-    # Least frequent set in users' inventories
+    #  Least frequent set in users' inventories
     less_frequent_set = next(USERS_COLLECTION.aggregate([
-        {"$project": {"sets": {"$objectToArray": "$inventory.sets"}}},
-        {"$unwind": "$sets"},
-        {"$group": {"_id": "$sets.k", "count": {"$sum": 1}}},
+        {"$unwind": "$inventory.sets"},
+        {"$group": {
+            "_id": "$inventory.sets._id",
+            "count": {"$sum": "$inventory.sets.quantity"}
+        }},
         {"$sort": {"count": 1}},
         {"$limit": 1}
     ]), None)
 
+    #  Zapisz wyniki w statystykach
     statistics['users'] = {
         "total_users": total_users,
         "users_with_sets": users_with_sets,
@@ -230,6 +400,7 @@ def get_user_statistics():
     }
 
     return statistics
+
 
 @stats_api.route('', methods=['GET'])
 def database_statistics():

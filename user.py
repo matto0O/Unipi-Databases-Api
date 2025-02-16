@@ -161,7 +161,7 @@ def add_items_to_inventory(current_user,id):
         if not isinstance(data['parts'], list):
             return jsonify({'error': "'parts' must be a list of (_id, color, quantity) objects."}), 400
         for object_ in data['parts']:
-            if not isinstance(object_, dict) or ["_id", "color", "quantity"] not in object_:
+            if not isinstance(object_, dict) or not all(key in object_ for key in ["_id", "color", "quantity"]):
                 return jsonify({'error': f"Part should be a (_id, color, quantity) object."}), 400
             if not isinstance(object_["quantity"], int):
                 return jsonify({'error': f"Invalid quantity for part {object_["_id"]}, color {object_["color"]}. Must be an integer."}), 400
@@ -344,25 +344,42 @@ def most_expensive_part(current_user, id):
 
 @users_api.route('/<id>/inventory/total_value')
 @token_required
-def total_value_of_owned_parts(current_user,id):
+def total_value_of_owned_parts(current_user, id):
     user = USERS_COLLECTION.find_one({"_id": id})
-    # chacking that curent user is the same as the user requested
+    
+    if not user:
+        return jsonify({'message': 'User not found'}), 404
+    
     if current_user['_id'] != id and not current_user.get('is_admin', False):
         return jsonify({'message': 'Unauthorized access'}), 403
-
-    total_value = 0
-    # Check parts in user's inventory
-    if 'inventory' in user and 'parts' in user['inventory']:
-        for part_obj in user['inventory']['parts']:
-            # Find the part in PARTS_COLLECTION
-            part_id = part_obj['_id']
-            color = part_obj['color']
-            part = PARTS_COLLECTION.find_one({"_id": part_id})
-            if part:
-                total_value += part["colors"][color][0]["price"] * part_obj['quantity']
+    
+    total_value = 0.0
+    
+    inventory = user.get('inventory', {})
+    parts = inventory.get('parts', [])
+    
+    for part_obj in parts:
+        part_id = part_obj.get('_id')
+        color = part_obj.get('color')
+        quantity = part_obj.get('quantity', 0)
+        
+        if not part_id or not color or quantity <= 0:
+            continue 
+        
+        part = PARTS_COLLECTION.find_one({"_id": part_id})
+        
+        if part and "colors" in part and color in part["colors"]:
+            prices = [entry.get("Price", 0) for entry in part["colors"][color] if isinstance(entry, dict) and "Price" in entry]
+            
+            if prices:
+                min_price = min(prices)  
+                total_value += min_price * quantity
+    
+    return jsonify({'total_value': round(total_value, 2)})
 
     # Return the total value of owned parts
     return jsonify({'total_value': round(total_value, 2)})
+
 
 @users_api.route('/<id>/inventory/completed/<top_count>', methods=['GET'])
 # @token_required
@@ -460,68 +477,77 @@ def _get_all_parts(uid):
 
     return all_parts
 
-#This function compute the cheapest set that the user can complete
 @users_api.route('/<id>/inventory/cheapest_set', methods=['GET'])
 @token_required
-def find_cheapest_from_inventory(current_user,id):
-    # chacking that curent user is the same as the user requested
+def find_cheapest_from_inventory(current_user, id):
+    # Ensure the user is authorized to access this data
     if current_user['_id'] != id and not current_user.get('is_admin', False):
         return jsonify({'message': 'Unauthorized access'}), 403
-  
+
+    # Fetch user's inventory (parts they own)
     user_parts = _get_all_parts(id)
-    completed_percentages = []
 
-    all_sets = SET_CONTENTS_COLLECTION.find()
+    # Retrieve all sets and only necessary fields (_id and parts)
+    all_sets = list(SET_CONTENTS_COLLECTION.find({}, {"_id": 1, "parts": 1}))
 
+    # Retrieve all set overviews in a single query (store them in a dictionary for fast lookup)
+    set_overviews = {
+        doc["_id"]: doc for doc in SET_OVERVIEWS_COLLECTION.find(
+            {}, {"_id": 1, "name": 1, "year": 1, "num_parts": 1, "min_offer": 1}
+        )
+    }
+
+    possible_sets = []
+
+    # Loop through each set
     for set_doc in all_sets:
         set_id = set_doc["_id"]
         set_parts = set_doc["parts"]
+
+        # Skip sets that do not have an overview (no price data)
+        if set_id not in set_overviews:
+            continue  
+
+        set_overview = set_overviews[set_id]
+
         total_parts_in_set = 0
         owned_parts_count = 0
 
-        for part_id, part_info in set_parts.items():
-            total_parts_in_set += part_info["quantity"]
-            user_quantity = user_parts.get((part_id, part_info["color"]), 0)
-            owned_parts_count += min(user_quantity, part_info["quantity"])
-
-        if total_parts_in_set > 0:
-            completion_percentage = (owned_parts_count / total_parts_in_set) * 100
+        # Handle both list-based and dictionary-based part formats
+        if isinstance(set_parts, list):
+            for part in set_parts:
+                part_id = part["_id"]
+                for color_info in part.get('colors', []):
+                    color = color_info['color']
+                    quantity = color_info['quantity']
+                    user_quantity = user_parts.get((part_id, color), 0)
+                    total_parts_in_set += quantity
+                    owned_parts_count += min(user_quantity, quantity)
         else:
-            completion_percentage = 0
+            for part_id, part_info in set_parts.items():
+                total_parts_in_set += part_info["quantity"]
+                user_quantity = user_parts.get((part_id, part_info["color"]), 0)
+                owned_parts_count += min(user_quantity, part_info["quantity"])
 
-        if completion_percentage < 100:  # Skip sets with 100% completion
-            completed_percentages.append({
-                "set_id": set_id,
-                "completion_percentage": round(completion_percentage, 2)
-            })
+        # Skip sets that are already fully completed
+        if owned_parts_count >= total_parts_in_set:
+            continue
 
-    completed_percentages.sort(key=lambda x: x["completion_percentage"], reverse=True)
-    completed_percentages = completed_percentages[:10]  # Only consider the top 10
+        # Add set to the list of potential options
+        possible_sets.append({
+            "set_id": set_id,
+            "name": set_overview["name"],
+            "year": set_overview["year"],
+            "num_parts": set_overview["num_parts"],
+            "min_offer": set_overview.get("min_offer", float('inf'))  # Default to infinity if no price is found
+        })
 
-    cheapest_set = None
-    min_price = float('inf')
+    # Sort sets by price and select the top 10 cheapest
+    cheapest_sets = sorted(possible_sets, key=lambda x: x["min_offer"])[:10]
 
-    for set_info in completed_percentages:
-        set_id = set_info["set_id"]
+    # If no sets found, return a 404 response
+    if not cheapest_sets:
+        return jsonify({"message": "No sets found"}), 404
 
-        set_overview = SET_OVERVIEWS_COLLECTION.find_one({"_id": set_id})
-        if set_overview and "min_offer" in set_overview:
-            if set_overview["min_offer"] < min_price:
-                cheapest_set = {
-                    "set_id": set_id,
-                    "name": set_overview["name"],
-                    "year": set_overview["year"],
-                    "num_parts": set_overview["num_parts"],
-                    "min_offer": set_overview["min_offer"],
-                    "completion_percentage": set_info["completion_percentage"]
-                }
-
-    if not cheapest_set:
-        return jsonify({
-            "completed_percentages": completed_percentages
-        }), 404
-
-    return jsonify({
-        "cheapest_set": cheapest_set,
-        "completed_percentages": completed_percentages
-    })
+    # Return the top 10 cheapest sets
+    return jsonify({"cheapest_sets": cheapest_sets})

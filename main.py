@@ -21,6 +21,7 @@ app.register_blueprint(parts_api, url_prefix='/parts')
 app.register_blueprint(colors_api, url_prefix='/colors')
 app.register_blueprint(sets_api, url_prefix='/sets')
 app.register_blueprint(stats_api, url_prefix='/stats')
+app.config['SECRET_KEY'] = "your_secret_key"
 
 # === ROOT ROUTE ===
 @app.route('/')
