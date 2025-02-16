@@ -344,101 +344,108 @@ def most_expensive_part(current_user, id):
 
 @users_api.route('/<id>/inventory/total_value')
 @token_required
-def total_value_of_owned_parts(current_user,id):
+def total_value_of_owned_parts(current_user, id):
     user = USERS_COLLECTION.find_one({"_id": id})
-    # chacking that curent user is the same as the user requested
+    
+    if not user:
+        return jsonify({'message': 'User not found'}), 404
+    
     if current_user['_id'] != id and not current_user.get('is_admin', False):
         return jsonify({'message': 'Unauthorized access'}), 403
-
-    total_value = 0
-    # Check parts in user's inventory
-    if 'inventory' in user and 'parts' in user['inventory']:
-        for part_obj in user['inventory']['parts']:
-            # Find the part in PARTS_COLLECTION
-            part_id = part_obj['_id']
-            color = part_obj['color']
-            part = PARTS_COLLECTION.find_one({"_id": part_id})
-            if part:
-                total_value += part["colors"][color][0]["price"] * part_obj['quantity']
+    
+    total_value = 0.0
+    
+    inventory = user.get('inventory', {})
+    parts = inventory.get('parts', [])
+    
+    for part_obj in parts:
+        part_id = part_obj.get('_id')
+        color = part_obj.get('color')
+        quantity = part_obj.get('quantity', 0)
+        
+        if not part_id or not color or quantity <= 0:
+            continue 
+        
+        part = PARTS_COLLECTION.find_one({"_id": part_id})
+        
+        if part and "colors" in part and color in part["colors"]:
+            prices = [entry.get("Price", 0) for entry in part["colors"][color] if isinstance(entry, dict) and "Price" in entry]
+            
+            if prices:
+                min_price = min(prices)  
+                total_value += min_price * quantity
+    
+    return jsonify({'total_value': round(total_value, 2)})
 
     # Return the total value of owned parts
     return jsonify({'total_value': round(total_value, 2)})
 
 @users_api.route('/<id>/inventory/completed/<top_count>', methods=['GET'])
 @token_required
-def set_completed_percentage(id, top_count, current_user):
-    top_count = int(top_count)
-    # chacking that curent user is the same as the user requested
+def set_completed_percentage(current_user, id, top_count):
+    try:
+        top_count = int(top_count)
+    except ValueError:
+        return jsonify({'error': 'Invalid top_count value'}), 400
+    
+    # Sprawdzenie uprawnień
     if current_user['_id'] != id and not current_user.get('is_admin', False):
         return jsonify({'message': 'Unauthorized access'}), 403
-
+    
     user = USERS_COLLECTION.find_one({"_id": id})
-
-    if user is None:
+    if not user:
         return jsonify({'error': 'User not found'}), 404
     
-    user_inventory = user['inventory']
+    user_inventory = user.get('inventory', {})
+    sets = user_inventory.get('sets', [])
+    if not sets:
+        return jsonify({'error': 'No sets found in inventory'}), 404
+    
     result = []
-
-    for set_obj in user_inventory['sets']:
-        set_id = set_obj['_id']
+    for set_obj in sets:
+        set_id = set_obj.get('_id')
         pipeline = [
-            {
-                '$match': {
-                    '_id': set_id
-                }
-            }, {
-                '$unwind': '$sim_scores'
-            }, {
-                '$project': {
-                    '_id': 0, 
-                    'similar_id': {
-                        '$arrayElemAt': [
-                            '$sim_scores', 0
-                        ]
-                    }, 
-                    'score': {
-                        '$arrayElemAt': [
-                            '$sim_scores', 1
-                        ]
-                    }
-                }
-            }, {
-                '$sort': {
-                    'score': -1
-                }
-            }, {
-                '$limit': 10
-            }
+            {'$match': {'_id': set_id}},
+            {'$unwind': '$sim_scores'},
+            {'$project': {
+                '_id': 0,
+                'similar_id': {'$arrayElemAt': ['$sim_scores', 0]},
+                'score': {'$arrayElemAt': ['$sim_scores', 1]}
+            }},
+            {'$sort': {'score': -1}},
+            {'$limit': 10}
         ]
-        
         result.extend(list(SET_SIMILARITIES_COLLECTION.aggregate(pipeline)))
-    result = list(sorted(result, key=lambda x: x['score'], reverse=True))
+    
+    result.sort(key=lambda x: x['score'], reverse=True)
     result = result[:min(len(result), top_count)]
-    final_result = []
-    in_final = set()
-
+    
+    final_result, in_final = [], set()
     while len(final_result) < top_count and result:
         current = result.pop(0)
         if current['similar_id'] not in in_final:
             final_result.append(current)
             in_final.add(current['similar_id'])
-
+    
     user_parts = _get_all_parts(id)
+    user_parts_set = set(user_parts.keys())
+    
     final_percentage = []
-
     for final_set in final_result:
         set_contents = SET_CONTENTS_COLLECTION.find_one({"_id": final_set['similar_id']})
-        common_parts = 0
+        if not set_contents or 'num_parts' not in set_contents or 'parts' not in set_contents:
+            continue
+        
+        common_parts = sum(
+            min(val['quantity'], user_parts.get((part_id, val['color']), 0))
+            for part_id, val in set_contents['parts'].items()
+            if (part_id, val['color']) in user_parts_set
+        )
         total_parts = set_contents['num_parts']
-        set_parts = set_contents['parts']
-
-        for part_id, val in set_parts.items():
-            if (part_id, val['color']) in user_parts:
-                common_parts += min(val['quantity'], user_parts[(part_id, val['color'])])
-        final_percentage.append({'set_id': final_set['similar_id'], 'percentage': round(common_parts / total_parts * 100, 2)})
-
-    return jsonify(final_percentage)     
+        completion_percentage = round((common_parts / total_parts) * 100, 2)
+        final_percentage.append({'set_id': final_set['similar_id'], 'percentage': completion_percentage})
+    
+    return jsonify(final_percentage)
 
 def _get_all_parts(uid):
     user = USERS_COLLECTION.find_one({"_id": uid})
@@ -446,23 +453,37 @@ def _get_all_parts(uid):
         raise KeyError(uid)
     
     all_parts = {}
-    for elem in user['inventory']['parts']:
+    user_inventory = user.get('inventory', {})
+    
+    # Loop through the user's parts
+    for elem in user_inventory.get('parts', []):
         all_parts[(elem['_id'], elem['color'])] = elem['quantity']
-
-    for brickset in user['inventory']['sets']:
-        for part_id, val in SET_CONTENTS_COLLECTION.find_one({"_id": brickset})["parts"].items():
-            if (part_id, val["color"]) in all_parts:
-                all_parts[(part_id, val["color"])] += val["quantity"]
-            else:
-                all_parts[(part_id, val["color"])] = val["quantity"]
-
+    
+    # Loop through the user's sets and check the set contents
+    for brickset in user_inventory.get('sets', []):
+        set_contents = SET_CONTENTS_COLLECTION.find_one({"_id": brickset['_id']})
+        if not set_contents or 'parts' not in set_contents:
+            continue
+        
+        # Handle the parts field being a list of parts with color variants
+        for part in set_contents['parts']:
+            part_id = part['_id']
+            for color_info in part.get('colors', []):
+                color = color_info['color']
+                quantity = color_info['quantity']
+                key = (part_id, color)
+                all_parts[key] = all_parts.get(key, 0) + quantity
+    
     return all_parts
+
+
+
 
 #This function compute the cheapest set that the user can complete
 @users_api.route('/<id>/inventory/cheapest_set', methods=['GET'])
 @token_required
-def find_cheapest_from_inventory(current_user,id):
-    # chacking that curent user is the same as the user requested
+def find_cheapest_from_inventory(current_user, id):
+    # checking that current user is the same as the user requested
     if current_user['_id'] != id and not current_user.get('is_admin', False):
         return jsonify({'message': 'Unauthorized access'}), 403
   
@@ -477,11 +498,24 @@ def find_cheapest_from_inventory(current_user,id):
         total_parts_in_set = 0
         owned_parts_count = 0
 
-        for part_id, part_info in set_parts.items():
-            total_parts_in_set += part_info["quantity"]
-            user_quantity = user_parts.get((part_id, part_info["color"]), 0)
-            owned_parts_count += min(user_quantity, part_info["quantity"])
+        # Looping through set_parts, checking if it's a list and handling accordingly
+        if isinstance(set_parts, list):
+            for part in set_parts:
+                part_id = part["_id"]
+                for color_info in part.get('colors', []):
+                    color = color_info['color']
+                    quantity = color_info['quantity']
+                    user_quantity = user_parts.get((part_id, color), 0)
+                    total_parts_in_set += quantity
+                    owned_parts_count += min(user_quantity, quantity)
+        else:
+            # If set_parts is a dictionary, this code will work as previously
+            for part_id, part_info in set_parts.items():
+                total_parts_in_set += part_info["quantity"]
+                user_quantity = user_parts.get((part_id, part_info["color"]), 0)
+                owned_parts_count += min(user_quantity, part_info["quantity"])
 
+        # Calculate completion percentage
         if total_parts_in_set > 0:
             completion_percentage = (owned_parts_count / total_parts_in_set) * 100
         else:
