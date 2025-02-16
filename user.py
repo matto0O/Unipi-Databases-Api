@@ -100,8 +100,8 @@ def create_user():
         data['is_admin'] = False
 
     data['inventory'] = {
-        'parts': {},
-        'sets': {}
+        'parts': [],
+        'sets': []
     }
     try:
         result = USERS_COLLECTION.insert_one(data)

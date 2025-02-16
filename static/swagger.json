@@ -1,0 +1,855 @@
+openapi: "3.0.0"
+info:
+  title: "My Flask API"
+  description: "API documentation for managing users, inventory, colors, parts, sets, and statistics."
+  version: "1.0.0"
+servers:
+  - url: "http://localhost:5000"
+
+tags:
+  - name: "Users"
+    description: "User-related operations including inventory management."
+  - name: "Colors"
+    description: "Manage color data."
+  - name: "Parts"
+    description: "Manage parts and their details."
+  - name: "Sets"
+    description: "Manage sets and their related data."
+
+paths:
+  /users:
+    get:
+      tags:
+        - "Users"
+      summary: "Retrieve all users"
+      parameters:
+        - in: header
+          name: Authorization
+          description: "The number of requests left for the time window."
+          schema:
+            type: string
+            format: uuid
+            example: "dsafdsa324@!dsfa"
+          required: true
+        - name: "is_admin"
+          in: query
+          schema:
+            type: boolean
+          description: "Filter by admin status."
+          example: true
+        - name: "sort"
+          in: query
+          schema:
+            type: string
+            enum: ["_id", "name"]
+          description: "Sort users by a specific field."
+          example: "_id"
+      responses:
+        200:
+          description: "List of users retrieved successfully."
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+
+    post:
+      tags:
+        - "Users"
+      summary: "Create a new user"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreate'
+            example:
+              _id: "new_user"
+              password: "securePassword123"
+              is_admin: false
+      responses:
+        201:
+          description: "User created successfully."
+
+  /users/login:                
+    post:
+      tags:
+        - "Users"
+      summary: "Login"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreate'
+            example:
+              username: "admin"
+              password: "admin"
+      responses:
+        200:
+          description: "Logged in succesfully."
+          content:
+            application/json:
+              example:
+                token: "safddsaaer3145b1@@#!rt"
+  /users/{id}:
+    get:
+      tags:
+        - "Users"
+      summary: "Retrieve a user by ID"
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema:
+            type: string
+          description: "The unique ID of the user to retrieve."
+          example: "user123"
+      responses:
+        200:
+          description: "User details retrieved successfully."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+              example:
+                _id: "user123"
+                password: "securePassword123"
+                is_admin: false
+                inventory: {}
+        404:
+          description: "User not found."
+  
+    delete:
+      tags:
+        - "Users"
+      summary: "Delete a user by ID"
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema:
+            type: string
+          description: "The ID of the user to delete."
+          example: "user123"
+      responses:
+        200:
+          description: "User deleted successfully."
+          content:
+            application/json:
+              example:
+                message: "User user123 deleted successfully."
+        404:
+          description: "User not found."
+          content:
+            application/json:
+              example:
+                error: "User not found."
+
+  /users/{username}/inventory:
+    get:
+      tags:
+        - "Users"
+      summary: "Retrieve the inventory of a specific user"
+      parameters:
+        - name: "username"
+          in: path
+          required: true
+          schema:
+            type: string
+          description: "The username of the user."
+          example: "user1"
+      responses:
+        200:
+          description: "Inventory retrieved successfully."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Inventory'
+
+    post:
+      tags:
+        - "Users"
+      summary: "Add or update a user's inventory"
+      parameters:
+        - name: "username"
+          in: path
+          required: true
+          schema:
+            type: string
+          description: "The username of the user."
+          example: "user1"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Inventory'
+            example:
+              parts:
+                "32195a": { "Dark Gray": 17 }
+                "2464": { "Black": 8, "Light Gray": 4 }
+                "15362": { "Black": 10 }
+              sets:
+                "10272": 1
+                "10256": 1
+      responses:
+        200:
+          description: "Inventory updated successfully."
+
+  /users/{username}/inventory/total_value:
+    get:
+      tags:
+        - "Users"
+      summary: "Retrieve the total value of a user’s inventory"
+      parameters:
+        - name: "username"
+          in: path
+          required: true
+          schema:
+            type: string
+          description: "The username of the user."
+          example: "user1"
+      responses:
+        200:
+          description: "Total value of inventory retrieved successfully."
+          content:
+            application/json:
+              example:
+                total_value: 129.99
+
+  /users/{username}/inventory/completed/{set_id}:
+    get:
+      tags:
+        - "Users"
+      summary: "Check the completion percentage of a specific set in a user’s inventory"
+      parameters:
+        - name: "username"
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: "set_id"
+          in: path
+          required: true
+          schema:
+            type: string
+          description: "The ID of the set to check."
+          example: "10272"
+      responses:
+        200:
+          description: "Completion percentage retrieved successfully."
+          content:
+            application/json:
+              example:
+                set_id: "10272"
+                completion_percentage: 85
+    
+  /sets:
+    get:
+      tags:
+        - "Sets"
+      summary: "Retrieve all available sets"
+      parameters:
+        - name: "year"
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["_id", "name", "year"]
+          description: "Sort sets by a specific field."
+      responses:
+        200:
+          description: "List of all available sets retrieved successfully."
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Set'
+
+    post:
+      tags:
+        - "Sets"
+      summary: "Create a new set"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Set'
+            example:
+              _id: "set123"
+              name: "Example Set"
+              year: 2023
+              num_parts: 500
+              sim_scores: [0.9, 0.8]
+              parts:
+                part1:
+                  quantity: 2
+                  colors: ["red", "blue"]
+                part2:
+                  quantity: 3
+                  colors: ["yellow"]
+      responses:
+        201:
+          description: "Set created successfully."
+        400:
+          description: "Invalid input data."
+        409:
+          description: "Set already exists."
+
+  /sets/{id}:
+    get:
+      tags:
+        - "Sets"
+      summary: "Retrieve a set by ID"
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema:
+            type: string
+          description: "The ID of the set to retrieve."
+          example: "4524"
+      responses:
+        200:
+          description: "Set details retrieved successfully."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Set'
+        404:
+          description: "Set not found."
+
+    delete:
+      tags:
+        - "Sets"
+      summary: "Delete a set by ID"
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema:
+            type: string
+          description: "The ID of the set to delete."
+          example: "set123"
+      responses:
+        200:
+          description: "Set deleted successfully."
+        404:
+          description: "Set not found."
+
+  /sets/profitable/{x}:
+    get:
+      tags:
+        - "Sets"
+      summary: "Retrieve the top X most profitable sets"
+      parameters:
+        - name: "x"
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: "The number of top profitable sets to retrieve."
+          example: 5
+      responses:
+        200:
+          description: "List of top profitable sets retrieved successfully."
+          content:
+            application/json:
+              example:
+                - _id: "9999"
+                  name: "Expensive Set"
+                  profit: 120.5
+
+  /sets/popular/{x}:
+    get:
+      tags:
+        - "Sets"
+      summary: "Retrieve the top X most popular sets"
+      parameters:
+        - name: "x"
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: "The number of top popular sets to retrieve."
+          example: 5
+      responses:
+        200:
+          description: "List of top popular sets retrieved successfully."
+
+  /sets/cheapest/new/{x}:
+    get:
+      tags:
+        - "Sets"
+      summary: "Retrieve the top X cheapest new sets"
+      parameters:
+        - name: "x"
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: "The number of cheapest new sets to retrieve."
+          example: 5
+      responses:
+        200:
+          description: "List of cheapest new sets retrieved successfully."
+
+  /sets/cheapest/used/{x}:
+    get:
+      tags:
+        - "Sets"
+      summary: "Retrieve the top X cheapest used sets"
+      parameters:
+        - name: "x"
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: "The number of cheapest used sets to retrieve."
+          example: 5
+      responses:
+        200:
+          description: "List of cheapest used sets retrieved successfully."
+
+  /sets/{id}/offers:
+    put:
+      tags:
+        - "Sets"
+      summary: "Update offers for a specific set"
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema:
+            type: string
+          description: "The ID of the set to update offers for."
+          example: "set123"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: object
+                properties:
+                  link:
+                    type: string
+                  price:
+                    type: number
+                    format: float
+            example:
+              - link: "https://example.com/offer1"
+                price: 10.4
+              - link: "https://example.com/offer2"
+                price: 10.0
+      responses:
+        200:
+          description: "Offers updated successfully."
+        404:
+          description: "Set not found."
+
+  /parts:
+    get:
+      tags:
+        - "Parts"
+      summary: "Retrieve all parts"
+      parameters:
+        - name: "sort"
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["_id", "name"]
+          description: "Sort parts by a specific field."
+          example: "_id"
+        - name: "color"
+          in: query
+          required: false
+          schema:
+            type: string
+          description: "Filter parts by a specific color."
+          example: "Red"
+      responses:
+        200:
+          description: "List of all parts retrieved successfully."
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Part'
+              example:
+                - _id: "4600"
+                  colors:
+                    Red: []
+                    Blue: []
+                - _id: "3200"
+                  colors:
+                    Yellow: []
+
+    post:
+      tags:
+        - "Parts"
+      summary: "Create a new part with associated colors and offers"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Part'
+            example:
+              _id: "test_part"
+              colors:
+                Blue:
+                  - Link: "http://example.com/store1"
+                    Quantity: 2
+                    Price: 8.6
+                  - Link: "http://example.com/store2"
+                    Quantity: 1
+                    Price: 11.64
+      responses:
+        201:
+          description: "Part created successfully."
+          content:
+            application/json:
+              example:
+                message: "Part created successfully."
+        400:
+          description: "Invalid input data."
+        409:
+          description: "Part already exists."
+          content:
+            application/json:
+              example:
+                error: "Part already exists."
+
+  /parts/{id}:
+    get:
+      tags:
+        - "Parts"
+      summary: "Retrieve a part by ID"
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema:
+            type: string
+          description: "The ID of the part to retrieve."
+          example: "4600"
+      responses:
+        200:
+          description: "Part details retrieved successfully."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Part'
+              example:
+                _id: "4600"
+                colors:
+                  Red: []
+                  Blue: []
+        404:
+          description: "Part not found."
+          content:
+            application/json:
+              example:
+                error: "Part not found."
+
+    delete:
+      tags:
+        - "Parts"
+      summary: "Delete a part by ID"
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema:
+            type: string
+          description: "The ID of the part to delete."
+          example: "test_part"
+      responses:
+        200:
+          description: "Part deleted successfully."
+          content:
+            application/json:
+              example:
+                message: "Part test_part deleted successfully."
+        404:
+          description: "Part not found."
+          content:
+            application/json:
+              example:
+                error: "Part not found."
+
+  /parts/{id}/colors:
+    get:
+      tags:
+        - "Parts"
+      summary: "Retrieve all available colors for a specific part"
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema:
+            type: string
+          description: "The ID of the part."
+          example: "4600"
+      responses:
+        200:
+          description: "Colors for the part retrieved successfully."
+          content:
+            application/json:
+              example:
+                _id: "4600"
+                colors:
+                  - Red
+                  - Blue
+        404:
+          description: "Part not found."
+          content:
+            application/json:
+              example:
+                error: "Part not found."
+
+    post:
+      tags:
+        - "Parts"
+      summary: "Add new colors to a specific part"
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema:
+            type: string
+          description: "The ID of the part to add colors to."
+          example: "test_part"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                colors:
+                  type: string
+              example:
+                colors: "Light Blue"
+      responses:
+        200:
+          description: "Color added successfully."
+          content:
+            application/json:
+              example:
+                message: "Color Light Blue added successfully to part test_part."
+        404:
+          description: "Part not found."
+          content:
+            application/json:
+              example:
+                error: "Part not found."
+
+    delete:
+      tags:
+        - "Parts"
+      summary: "Remove specific colors from a part"
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema:
+            type: string
+          description: "The ID of the part to remove colors from."
+          example: "test_part"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                colors:
+                  type: string
+              example:
+                colors: "Light Blue"
+      responses:
+        200:
+          description: "Color removed successfully."
+          content:
+            application/json:
+              example:
+                message: "Color Light Blue removed successfully from part test_part."
+        404:
+          description: "Part not found."
+          content:
+            application/json:
+              example:
+                error: "Part not found."
+
+  /parts/offers/{id}/{color}:
+    get:
+      tags:
+        - "Parts"
+      summary: "Retrieve offers for a specific part and color"
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema:
+            type: string
+          description: "The ID of the part."
+          example: "4600"
+        - name: "color"
+          in: path
+          required: true
+          schema:
+            type: string
+          description: "The color of the part."
+          example: "Blue"
+      responses:
+        200:
+          description: "Offers for the part and color retrieved successfully."
+          content:
+            application/json:
+              example:
+                _id: "4600"
+                color: "Blue"
+                offers:
+                  - Link: "http://example.com/store1"
+                    Quantity: 2
+                    Price: 8.6
+                  - Link: "http://example.com/store2"
+                    Quantity: 1
+                    Price: 11.64
+        404:
+          description: "Part or color not found."
+          content:
+            application/json:
+              example:
+                error: "Part or color not found."
+
+  /colors:
+    get:
+      tags:
+        - "Colors"
+      summary: "Retrieve all colors"
+      description: "Retrieve a list of all colors. Use 'all' as the filter value to retrieve all colors."
+      parameters:
+        - name: "filter"
+          in: query
+          schema:
+            type: string
+            enum: ["all"]
+          description: "Use 'all' to retrieve all colors."
+          example: "all"
+      responses:
+        200:
+          description: "List of colors retrieved successfully."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  colors:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Color'
+              example:
+                status: "success"
+                colors:
+                  - _id: 1
+                    name: "Black"
+                    rgb: "000000"
+                  - _id: 2
+                    name: "White"
+                    rgb: "FFFFFF"
+                  - _id: 3
+                    name: "Red"
+                    rgb: "FF0000"
+        400:
+          description: "Invalid filter option provided."
+          content:
+            application/json:
+              example:
+                error: "Invalid filter value."
+    post:
+      tags:
+        - "Colors"
+      summary: "Add a new color"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ColorCreate'
+            example:
+              _id: 9911
+              name: "Blue"
+              rgb: "0000FF"
+      responses:
+        201:
+          description: "Color added successfully."
+          content:
+            application/json:
+              example:
+                message: "Color added successfully."
+                color:
+                  _id: 9911
+                  name: "Blue"
+                  rgb: "0000FF"
+        400:
+          description: "Color already exists."
+          content:
+            application/json:
+              example:
+                error: "Color with ID 9911 already exists."
+
+  /colors/{id}:
+    get:
+      tags:
+        - "Colors"
+      summary: "Retrieve a specific color by ID"
+      parameters:
+        - name: "id"
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: "The unique ID of the color to retrieve."
+          example: 9
+      responses:
+        200:
+          description: "Color retrieved successfully."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ColorResponse'
+              example:
+                status: "success"
+                color:
+                  _id: 9
+                  name: "Red"
+                  rgb: "FF0000"
+        404:
+          description: "Color not found."
+          content:
+            application/json:
+              example:
+                error: "Color with ID 9 not found."
+
+    delete:
+      tags:
+        - "Colors"
+      summary: "Delete a color by ID"
+      parameters:
+        - name: "id"
+
+
+
