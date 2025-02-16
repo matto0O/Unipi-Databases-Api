@@ -20,22 +20,23 @@ def get_sets():
     return sub_get_sets()
 
 @sets_api.route('/<id>')
-@redis_cache(module='sets', expire=600)
 def get_set(id):
-    result = SET_OVERVIEWS_COLLECTION.find_one({"_id": str(id)})
-    offers = SET_OFFERS_COLLECTION.find_one({"_id": str(id)})
-    contents = SET_CONTENTS_COLLECTION.find_one({"_id": str(id)})
+    REDIS.hincrby(f"set:{id}", "visit_count", 1)
 
-    if not result:
-        return jsonify({'error': 'Set not found.'}), 404
+    @redis_cache(module='sets', expire=600)
+    def sub_get_set(id):
+        offers = SET_OFFERS_COLLECTION.find_one({"_id": str(id)})
+        contents = SET_CONTENTS_COLLECTION.find_one({"_id": str(id)})
 
-    result = result | contents
-    if offers:
-        result = result | offers
-    
-    # if result:
-    #     REDIS.hincrby(f"set:{id}", "visit_count", 1)
-    return jsonify(result), 200
+        if not result:
+            return jsonify({'error': 'Set not found.'}), 404
+
+        result = result | contents
+        if offers:
+            result = result | offers
+        
+        return jsonify(result), 200
+    return sub_get_set(id)
 
 @sets_api.route('/<id>/offers', methods=['PUT', 'POST'])
 def update_set_offers(id):
