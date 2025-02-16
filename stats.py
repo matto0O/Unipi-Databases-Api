@@ -80,39 +80,142 @@ def get_part_statistics():
 
     # Distribution of colors among parts
     color_counts = PARTS_COLLECTION.aggregate([
-        {"$project": {"colors": {"$objectToArray": "$colors"}}},
-        {"$unwind": "$colors"},
-        {"$group": {"_id": "$colors.k", "count": {"$sum": {"$size": "$colors.v"}}}}
+    {
+        "$project": {
+            "colors": {
+                "$cond": {
+                    "if": {"$isArray": "$colors"},  # Check if colors is an array
+                    "then": "$colors",  # If it's already an array, keep it as is
+                    "else": {"$objectToArray": "$colors"}  # If it's an object, convert it to an array
+                }
+            }
+        }
+    },
+    {"$unwind": "$colors"},  # Unwind the array of colors
+    {"$unwind": "$colors.v"},  # Unwind the array of offers for each color
+    {"$group": {"_id": "$colors.k", "count": {"$sum": 1}}}  # Count number of offers for each color
     ])
+
     colors_distribution = {doc["_id"]: doc["count"] for doc in color_counts}
 
     # Part with the most offers
     part_with_most_offers = next(PARTS_COLLECTION.aggregate([
-        {"$project": {"_id": 1, "num_offers": {"$sum": [{"$size": {"$ifNull": [{"$objectToArray": "$colors"}, []]}}]}}},
-        {"$sort": {"num_offers": -1}},
-        {"$limit": 1}
-    ]), None)
+    {
+        "$project": {
+            "_id": 1,
+            "num_offers": {
+                "$cond": [
+                    {"$eq": [{"$type": "$colors"}, "object"]},
+                    {
+                        "$sum": {
+                            "$map": {
+                                "input": { "$objectToArray": "$colors" },
+                                "as": "color",
+                                "in": { "$size": "$$color.v" }
+                            }
+                        }
+                    },
+                    {"$cond": [
+                        {"$eq": [{"$type": "$colors"}, "array"]},
+                        { "$size": "$colors" },
+                        0
+                    ]}
+                ]
+            }
+        }
+    },
+    {"$sort": {"num_offers": -1}},
+    {"$limit": 1}
+]), None)
 
     # Part with the least offers
     part_with_less_offers = next(PARTS_COLLECTION.aggregate([
-        {"$project": {"_id": 1, "num_offers": {"$sum": [{"$size": {"$ifNull": [{"$objectToArray": "$colors"}, []]}}]}}},
-        {"$sort": {"num_offers": 1}},
-        {"$limit": 1}
-    ]), None)
+    {
+        "$project": {
+            "_id": 1,
+            "num_offers": {
+                "$cond": [
+                    {"$eq": [{"$type": "$colors"}, "object"]},
+                    {
+                        "$sum": {
+                            "$map": {
+                                "input": { "$objectToArray": "$colors" },
+                                "as": "color",
+                                "in": { "$size": "$$color.v" }
+                            }
+                        }
+                    },
+                    {"$cond": [
+                        {"$eq": [{"$type": "$colors"}, "array"]},
+                        { "$size": "$colors" },
+                        0
+                    ]}
+                ]
+            }
+        }
+    },
+    {"$sort": {"num_offers": 1}},
+    {"$limit": 1}
+]), None)
+
 
     # Cheapest part based on offers
     cheapest_part = next(PARTS_COLLECTION.aggregate([
-        {"$project": {"_id": 1, "min_price": {"$min": {"$map": {"input": {"$objectToArray": "$colors"}, "as": "color", "in": {"$min": {"$map": {"input": "$$color.v", "as": "offer", "in": "$$offer.Price"}}}}}}}},
-        {"$sort": {"min_price": 1}},
-        {"$limit": 1}
-    ]), None)
+    {
+        "$project": {
+            "_id": 1,
+            "min_price": {
+                "$min": {
+                    "$map": {
+                        "input": { "$objectToArray": "$colors" },  # Konwertujemy obiekt na tablicę par {k, v}
+                        "as": "color",
+                        "in": {
+                            "$min": {
+                                "$map": {
+                                    "input": "$$color.v",  # Dla każdego koloru pobieramy tablicę ofert
+                                    "as": "offer",
+                                    "in": "$$offer.Price"   # Z każdej oferty pobieramy pole Price
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    {"$sort": {"min_price": 1}},
+    {"$limit": 1}
+]), None)
+
 
     # Most expensive part based on offers
     most_expensive_part = next(PARTS_COLLECTION.aggregate([
-        {"$project": {"_id": 1, "max_price": {"$max": {"$map": {"input": {"$objectToArray": "$colors"}, "as": "color", "in": {"$max": {"$map": {"input": "$$color.v", "as": "offer", "in": "$$offer.Price"}}}}}}}},
-        {"$sort": {"max_price": -1}},
-        {"$limit": 1}
-    ]), None)
+    {
+        "$project": {
+            "_id": 1,
+            "max_price": {
+                "$max": {
+                    "$map": {
+                        "input": { "$objectToArray": "$colors" },  # Konwersja obiektu colors na tablicę par {k, v}
+                        "as": "color",
+                        "in": {
+                            "$max": {
+                                "$map": {
+                                    "input": "$$color.v",  # Dla każdego koloru pobieramy listę ofert
+                                    "as": "offer",
+                                    "in": "$$offer.Price"  # Z każdej oferty pobieramy cenę
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    {"$sort": {"max_price": -1}},  # Sortujemy malejąco wg max_price
+    {"$limit": 1}  # Pobieramy tylko jeden dokument – część o najwyższej cenie
+]), None)
+
 
     statistics['parts'] = {
         "total_parts": total_parts,
@@ -236,5 +339,5 @@ def database_statistics():
     statistics = {}
     statistics.update(get_set_statistics())
     statistics.update(get_part_statistics())
-    statistics.update(get_user_statistics())
+   # statistics.update(get_user_statistics())
     return jsonify(statistics)
