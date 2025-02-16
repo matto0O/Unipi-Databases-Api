@@ -139,7 +139,7 @@ def get_user_inventory(current_user, id):
     return jsonify(user['inventory']), 200
 
 
-@users_api.route('/<id>/inventory', methods=['POST, PUT'])
+@users_api.route('/<id>/inventory', methods=['POST', 'PUT'])
 @token_required
 def add_items_to_inventory(current_user,id):
     data = request.json
