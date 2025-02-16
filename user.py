@@ -9,7 +9,7 @@ USERS_COLLECTION = DB['users']
 PARTS_COLLECTION = DB['parts']
 SET_OVERVIEWS_COLLECTION = DB['set_overviews']
 SET_CONTENTS_COLLECTION = DB['set_contents']
-SET_SIMILARITIES_COLLECTION = DB['set_similarities']
+SET_SIMILARITIES_COLLECTION = DB['set_similiarities']
 SET_OFFERS_COLLECTION = DB['set_offers']
 
 # Making a token to authenticate users
@@ -365,12 +365,12 @@ def total_value_of_owned_parts(current_user,id):
     return jsonify({'total_value': round(total_value, 2)})
 
 @users_api.route('/<id>/inventory/completed/<top_count>', methods=['GET'])
-@token_required
-def set_completed_percentage(id, top_count, current_user):
+# @token_required
+def get_completed_percentage(id, top_count, current_user=None):
     top_count = int(top_count)
-    # chacking that curent user is the same as the user requested
-    if current_user['_id'] != id and not current_user.get('is_admin', False):
-        return jsonify({'message': 'Unauthorized access'}), 403
+    # # chacking that curent user is the same as the user requested
+    # if current_user['_id'] != id and not current_user.get('is_admin', False):
+    #     return jsonify({'message': 'Unauthorized access'}), 403
 
     user = USERS_COLLECTION.find_one({"_id": id})
 
@@ -392,23 +392,15 @@ def set_completed_percentage(id, top_count, current_user):
             }, {
                 '$project': {
                     '_id': 0, 
-                    'similar_id': {
-                        '$arrayElemAt': [
-                            '$sim_scores', 0
-                        ]
-                    }, 
-                    'score': {
-                        '$arrayElemAt': [
-                            '$sim_scores', 1
-                        ]
-                    }
+                    'similar_id': '$sim_scores._id', 
+                    'score': '$sim_scores.similarity'
                 }
             }, {
                 '$sort': {
                     'score': -1
                 }
             }, {
-                '$limit': 10
+                '$limit': max(top_count, 10)
             }
         ]
         
@@ -433,9 +425,14 @@ def set_completed_percentage(id, top_count, current_user):
         total_parts = set_contents['num_parts']
         set_parts = set_contents['parts']
 
-        for part_id, val in set_parts.items():
-            if (part_id, val['color']) in user_parts:
-                common_parts += min(val['quantity'], user_parts[(part_id, val['color'])])
+        for part_obj in set_parts:
+            part_id = part_obj['_id']
+            colors = part_obj['colors']
+            for color_obj in colors:
+                color = color_obj['color']
+                quantity = color_obj['quantity']
+                if (part_id, color) in user_parts:
+                    common_parts += min(quantity, user_parts[(part_id, color)])
         final_percentage.append({'set_id': final_set['similar_id'], 'percentage': round(common_parts / total_parts * 100, 2)})
 
     return jsonify(final_percentage)     
@@ -450,11 +447,16 @@ def _get_all_parts(uid):
         all_parts[(elem['_id'], elem['color'])] = elem['quantity']
 
     for brickset in user['inventory']['sets']:
-        for part_id, val in SET_CONTENTS_COLLECTION.find_one({"_id": brickset})["parts"].items():
-            if (part_id, val["color"]) in all_parts:
-                all_parts[(part_id, val["color"])] += val["quantity"]
-            else:
-                all_parts[(part_id, val["color"])] = val["quantity"]
+        brickset_id = brickset["_id"]
+        for part_obj in SET_CONTENTS_COLLECTION.find_one({"_id": brickset_id})["parts"]:
+            part_id = part_obj["_id"]
+            colors = part_obj["colors"]
+            for color_obj in colors:
+                color, quantity = color_obj["color"], color_obj["quantity"]
+                if (part_id, color) in all_parts:
+                    all_parts[(part_id, color)] += quantity
+                else:
+                    all_parts[(part_id, color)] = quantity
 
     return all_parts
 
